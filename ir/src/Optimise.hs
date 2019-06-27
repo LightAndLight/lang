@@ -63,6 +63,7 @@ inline_constants_stmt st =
       case e of
         Const c -> rest <$ modify (Map.insert n c)
         _ -> Bind n e <$> inline_constants_stmt rest
+    Seq e rest -> Seq e <$> inline_constants_stmt rest
 
 optimise :: Stmt -> Stmt
 optimise s =

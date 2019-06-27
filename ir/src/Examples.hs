@@ -10,11 +10,11 @@ addStuff = do
 
 prog :: Val -> Val -> IR Val
 prog a b = do
-  r1 <- load a
-  r2 <- load b
+  r1 <- load0 a
+  r2 <- load0 b
   r3 <- add (R r1) (R r2)
-  r4 <- load a
-  r5 <- load b
+  r4 <- load0 a
+  r5 <- load0 b
   r6 <- add (R r4) (R r5)
   R <$> mul (R r3) (R r6)
 
