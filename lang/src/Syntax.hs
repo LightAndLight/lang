@@ -39,7 +39,7 @@ data LL a
   | LName String
   | LProduct [LL a]
   | LProj !Word64 (LL a)
-  | LPack (LL a) (LL a)
+  | LClosure (LL a) (LL a)
   | LUnpack (LL a) (Scope Pos LL a)
   | LApp (LL a) (LL a) (LL a)
   | LBin Op (LL a) (LL a)
@@ -89,7 +89,7 @@ trans ex = (val, defs)
         (a', vs) <- go replace $ fromScope a
       n <- freshName
       tell [LDef n $ toScope $ a' >>= replace]
-      pure (LPack (LName n) (LProduct $ LVar <$> vs'), vs')
+      pure (LClosure (LName n) (LProduct $ LVar <$> vs'), vs')
     go f (App a b) = do
       (a', vs1) <- go f a
       (b', vs2) <- go f b

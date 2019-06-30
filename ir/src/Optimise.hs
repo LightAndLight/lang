@@ -62,11 +62,13 @@ rewrite_exps f st =
       Seq a <$> rewrite_exps f b
     Comment a b -> Comment a <$> rewrite_exps f b
     Pure{} -> empty
+    Empty -> empty
 
 inline_constants_stmt ::
   MonadState (Map Reg Const) m => Stmt -> MaybeT m Stmt
 inline_constants_stmt st =
   case st of
+    Empty -> empty
     Pure v ->
       case v of
         R r -> Pure . C <$> MaybeT (gets $ Map.lookup r)

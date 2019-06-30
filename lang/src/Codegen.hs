@@ -37,8 +37,7 @@ cg_def var (LDef ln lb) =
               IR.R <$> IR.load (IR.C $ IR.W64 1) (IR.R IR.sp))
         var)
       (fromScope lb)
-    _ <- IR.mov a' IR.rv
-    IR.R IR.rv <$ IR.ret
+    IR.ret a'
 
 cg_expr :: (a -> IR IR.Val) -> LL a -> IR IR.Val
 cg_expr = go
@@ -69,18 +68,18 @@ cg_expr = go
             Add -> IR.R <$> IR.add va vb
             Mult -> IR.R <$> IR.mul va vb
         LApp f e x -> do
-          _ <- IR.push =<< go var e
-          _ <- IR.push =<< go var x
-          _ <- IR.icall =<< go var f
-          _ <- IR.pop
-          _ <- IR.pop
-          pure $ IR.R IR.rv
-        LPack a b -> do
-          loc <- IR.alloc (IR.C $ IR.W64 2)
-          a' <- go var a
-          _ <- IR.store a' (IR.C $ IR.W64 0) (IR.R loc)
-          b' <- go var b
-          _ <- IR.store b' (IR.C $ IR.W64 1) (IR.R loc)
+          f' <- go var f
+          e' <- go var e
+          x' <- go var x
+          IR.R <$> IR.icall f' [e', x']
+        LClosure a b -> do
+          loc <- tag "allocate closure" $ IR.alloc (IR.C $ IR.W64 2)
+          tag "pack code" $ do
+            a' <- go var a
+            IR.store a' (IR.C $ IR.W64 0) (IR.R loc)
+          tag "pack env" $ do
+            b' <- go var b
+            IR.store b' (IR.C $ IR.W64 1) (IR.R loc)
           pure $ IR.R loc
         LUnpack a b -> do
           a' <- go var a
