@@ -53,10 +53,6 @@ instance Show a => Show (LL a) where; showsPrec = showsPrec1
 data LVar = LEnv | LArg
   deriving (Eq, Show)
 
-lvar :: r -> r -> LVar -> r
-lvar a _ LEnv = a
-lvar _ a LArg = a
-
 data LDef a = LDef { lName :: String, lBody :: Scope LVar LL a }
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
