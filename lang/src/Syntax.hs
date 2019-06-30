@@ -50,11 +50,11 @@ deriveShow1 ''LL
 instance Eq a => Eq (LL a) where; (==) = eq1
 instance Show a => Show (LL a) where; showsPrec = showsPrec1
 
-data LVar = LEnv Int | LArg
+data LVar = LEnv | LArg
   deriving (Eq, Show)
 
-lvar :: (Int -> r) -> r -> LVar -> r
-lvar f _ (LEnv a) = f a
+lvar :: r -> r -> LVar -> r
+lvar a _ LEnv = a
 lvar _ a LArg = a
 
 data LDef a = LDef { lName :: String, lBody :: Scope LVar LL a }
@@ -70,21 +70,25 @@ freshName = do
 trans :: forall a. Eq a => Exp a -> (LL a, [LDef a])
 trans ex = (val, defs)
   where
-    ((val, _), defs) = runWriter $ evalStateT (go F ex) (('f' :) . show <$> [0::Int ..])
+    ((val, _), defs) = runWriter $ evalStateT (go (LVar . F) ex) (('f' :) . show <$> [0::Int ..])
 
     go ::
       forall b m.
       (Eq b, MonadWriter [LDef a] m, MonadState [String] m, MonadFix m) =>
-      (b -> Var LVar a) ->
+      (b -> LL (Var LVar a)) ->
       Exp b -> m (LL b, [b])
     go _ (Var a) = pure (LVar a, [a])
     go f (Lam a) = do
       rec
-        let replace = unvar (\_ -> B LArg) (\b -> maybe (f b) (B . LEnv) $ elemIndex b vs')
+        let
+          vs' = foldr (unvar (const id) (:)) [] vs
+          replace =
+            unvar
+              (\_ -> LVar $ B LArg)
+              (\b -> maybe (f b) (\ix -> LProj (fromIntegral ix) (LVar $ B LEnv)) $ elemIndex b vs')
         (a', vs) <- go replace $ fromScope a
-        let vs' = foldr (unvar (const id) (:)) [] vs
       n <- freshName
-      tell [LDef n $ toScope $ replace <$> a']
+      tell [LDef n $ toScope $ a' >>= replace]
       pure (LPack (LName n) (LProduct $ LVar <$> vs'), vs')
     go f (App a b) = do
       (a', vs1) <- go f a

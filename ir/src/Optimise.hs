@@ -25,6 +25,14 @@ fold_constants e =
     Mul (C (W64 a)) (C (W64 b)) -> pure $ Const (W64 $ a * b)
     _ -> empty
 
+alloc_0_null :: Monad m => Exp -> MaybeT m Exp
+alloc_0_null (Alloc (C (W64 0))) = pure $ Const Null
+alloc_0_null _ = empty
+
+mov_id :: Monad m => Exp -> MaybeT m Exp
+mov_id (Mov a b) = Const Unit <$ guard (a == R b)
+mov_id _ = empty
+
 inline_constants_exp :: MonadState (Map Reg Const) m => Exp -> MaybeT m Exp
 inline_constants_exp e = do
   (a, Any change) <-
@@ -49,7 +57,11 @@ rewrite_exps f st =
     Bind n e rest ->
       (\e' -> Bind n e' rest) <$> f e <|>
       Bind n e <$> rewrite_exps f rest
-    _ -> empty
+    Seq a b ->
+      (\a' -> Seq a' b) <$> f a <|>
+      Seq a <$> rewrite_exps f b
+    Comment a b -> Comment a <$> rewrite_exps f b
+    Pure{} -> empty
 
 inline_constants_stmt ::
   MonadState (Map Reg Const) m => Stmt -> MaybeT m Stmt
@@ -64,6 +76,7 @@ inline_constants_stmt st =
         Const c -> rest <$ modify (Map.insert n c)
         _ -> Bind n e <$> inline_constants_stmt rest
     Seq e rest -> Seq e <$> inline_constants_stmt rest
+    Comment s rest -> Comment s <$> inline_constants_stmt rest
 
 optimise :: Stmt -> Stmt
 optimise s =
@@ -78,6 +91,8 @@ optimise s =
     exp_opts =
       [ fold_constants
       , inline_constants_exp
+      , alloc_0_null
+      , mov_id
       ]
 
     stmt_opts =

@@ -5,6 +5,7 @@ module IR
   , IR, genIR, add, mul, mov, alloc, store, load, load0, push, pop
   , icall, ret
   , ijump
+  , comment
   )
 where
 
@@ -27,16 +28,21 @@ instance Pretty Reg where
   pretty RV = Pretty.text "%rv"
 
 data Const
-  = W64 Word64
+  = Unit
+  | Null
+  | W64 Word64
   deriving (Eq, Ord, Show, Generic)
 instance Pretty Const where
+  pretty Unit = Pretty.text "unit"
+  pretty Null = Pretty.text "null"
   pretty (W64 a) = Pretty.int (fromIntegral a)
 
-data Val = C Const | R Reg
+data Val = C Const | R Reg | F String
   deriving (Eq, Ord, Show, Generic)
 instance Pretty Val where
   pretty (C a) = pretty a
   pretty (R a) = pretty a
+  pretty (F a) = Pretty.char '"' <> Pretty.text a <> Pretty.char '"'
 
 data Exp
  -- | `Alloc x`: allocate n words on the heap
@@ -76,6 +82,7 @@ data Stmt
   = Pure Val
   | Bind Reg Exp Stmt
   | Seq Exp Stmt
+  | Comment String Stmt
   deriving (Show, Generic)
 instance Pretty Stmt where
   pretty (Pure a) = Pretty.text "pure " <> pretty a
@@ -85,15 +92,20 @@ instance Pretty Stmt where
   pretty (Seq a b) =
     (pretty a <> Pretty.char ';') Pretty.<$>
     pretty b
+  pretty (Comment a b) =
+    Pretty.text "## " <> pretty a Pretty.<$>
+    pretty b
 
 foldStmts ::
   (Val -> r) ->
   (Reg -> Exp -> r -> r) ->
   (Exp -> r -> r) ->
+  (String -> r -> r) ->
   Stmt -> r
-foldStmts f _ _ (Pure a) = f a
-foldStmts f g h (Bind a b c) = g a b (foldStmts f g h c)
-foldStmts f g h (Seq a b) = h a (foldStmts f g h b)
+foldStmts f _ _ _ (Pure a) = f a
+foldStmts f g h i (Bind a b c) = g a b (foldStmts f g h i c)
+foldStmts f g h i (Seq a b) = h a (foldStmts f g h i b)
+foldStmts f g h i (Comment a b) = i a (foldStmts f g h i b)
 
 instance Plated Stmt where; plate = gplate
 
@@ -118,8 +130,8 @@ bind e = do
   r <- nextReg
   r <$ IR (modify $ \s -> s { sCode = sCode s . Bind r e })
 
-expr :: Exp -> IR ()
-expr e = IR $ modify (\s -> s { sCode = sCode s . Seq e })
+comment :: String -> IR ()
+comment str = IR $ modify (\s -> s { sCode = sCode s . Comment str })
 
 add :: Val -> Val -> IR Reg
 add a b = bind $ Add a b
@@ -127,20 +139,20 @@ add a b = bind $ Add a b
 mul :: Val -> Val -> IR Reg
 mul a b = bind $ Mul a b
 
-store :: Val -> Val -> Val -> IR ()
-store a b c = expr $ Store a b c
+store :: Val -> Val -> Val -> IR Reg
+store a b c = bind $ Store a b c
 
-mov :: Val -> Reg -> IR ()
-mov a b = expr $ Mov a b
+mov :: Val -> Reg -> IR Reg
+mov a b = bind $ Mov a b
 
-push :: Val -> IR ()
-push = expr . Push
+push :: Val -> IR Reg
+push = bind . Push
 
-icall :: Val -> IR ()
-icall = expr . ICall
+icall :: Val -> IR Reg
+icall = bind . ICall
 
-ret :: IR ()
-ret = expr Ret
+ret :: IR Reg
+ret = bind Ret
 
 pop :: IR Reg
 pop = bind Pop
@@ -151,8 +163,9 @@ load a b = bind $ Load a b
 load0 :: Val -> IR Reg
 load0 = load (C $ W64 0)
 
-ijump :: Val -> IR ()
-ijump = expr . IJump
+ijump :: Val -> IR Reg
+ijump = bind . IJump
+
 
 alloc :: Val -> IR Reg
 alloc a = bind $ Alloc a
