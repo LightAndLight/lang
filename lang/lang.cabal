@@ -14,20 +14,24 @@ maintainer:          isaace71295@gmail.com
 -- copyright:
 category:            Language
 extra-source-files:  CHANGELOG.md
+                     lib/support.c
 
 library
   exposed-modules:     Codegen
                      , Codegen.LLVM
+                     , Compile
                      , Syntax
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
                      , bound
                      , containers
                      , deriving-compat
+                     , llvm-hs ==7.0.0
                      , llvm-hs-pure ==7.0.0
                      , llvm-hs-pretty ==0.6.1.0
                      , mtl
                      , ir
+                     , process ^>= 1.6
                      , text ^>=1.2
   hs-source-dirs:      src
   ghc-options:         -Wall -Werror

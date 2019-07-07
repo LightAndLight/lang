@@ -6,7 +6,6 @@ module Codegen.LLVM where
 
 import Bound.Scope.Simple (fromScope)
 import Bound.Var (unvar)
-import Control.Monad ((<=<))
 import Control.Monad.Fix (MonadFix)
 import Data.Foldable (for_, foldrM)
 import Data.Map (Map)
@@ -182,12 +181,17 @@ cgWithResult var k ktype (val, ds) = do
     val' <- cg_expr closureType malloc names var val
     k val'
 
--- reads an int64 result
+-- prints an int64 result
 cgModule :: (LL Void, [LDef Void]) -> LLVM.Module
-cgModule =
+cgModule code =
   LLVM.buildModule "testModule" .
-  LLVM.runIRBuilderT LLVM.emptyIRBuilder .
-  cgWithResult
-    absurd
-    (LLVM.ret <=< flip LLVM.load 0 <=< fromOpaquePtr (LLVM.ptr LLVM.i64))
-    LLVM.i64
+  LLVM.runIRBuilderT LLVM.emptyIRBuilder $ do
+    printInt <- LLVM.extern "printInt" [LLVM.i64] LLVM.void
+    cgWithResult
+      absurd
+      (\res -> do
+          n <- flip LLVM.load 0 =<< fromOpaquePtr (LLVM.ptr LLVM.i64) res
+          _ <- LLVM.call printInt [(n, [])]
+          LLVM.ret =<< LLVM.int64 0)
+      LLVM.i64
+      code
