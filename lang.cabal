@@ -17,20 +17,31 @@ extra-source-files:  CHANGELOG.md
                      lib/support.c
 
 library
-  exposed-modules:     Codegen.LLVM
+  exposed-modules:     Closure
+                     , Codegen
                      , Compile
+                     , Core
+                     , Core.Type
+                     , Elaborate
+                     , Operators
+                     , Parser
                      , Syntax
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
+                     , bifunctors
+                     , biscope
                      , bound
                      , containers
                      , deriving-compat
+                     , dlist
                      , llvm-hs ==7.0.0
                      , llvm-hs-pure ==7.0.0
                      , llvm-hs-pretty ==0.6.1.0
                      , mtl
+                     , parsers ^>=0.12
                      , process ^>= 1.6
                      , text ^>=1.2
+                     , trifecta ^>=2
   hs-source-dirs:      src
   ghc-options:         -Wall -Werror
   default-language:    Haskell2010

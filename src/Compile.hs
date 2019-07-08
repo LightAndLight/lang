@@ -11,16 +11,16 @@ import qualified LLVM.Module as LLVM
 import qualified LLVM.Target as LLVM
 
 import Syntax
-import Codegen.LLVM
+import Codegen
 
-genLLVM :: FilePath -> Exp Void -> IO ()
+genLLVM :: FilePath -> Syntax Void -> IO ()
 genLLVM fp ex =
   LLVM.withHostTargetMachine $ \tm -> do
     tt <- LLVM.getTargetMachineTriple tm
     let _mod = (cgModule $ trans ex) { LLVM.moduleTargetTriple = Just tt }
     LazyText.writeFile fp $ ppllvm _mod
 
-genObject :: FilePath -> Exp Void -> IO ()
+genObject :: FilePath -> Syntax Void -> IO ()
 genObject fp ex =
   LLVM.withHostTargetMachine $ \tm ->
   LLVM.withContext $ \ctx -> do
@@ -29,7 +29,7 @@ genObject fp ex =
     LLVM.withModuleFromAST ctx _mod $ \_mod' ->
       LLVM.writeObjectToFile tm (LLVM.File fp) _mod'
 
-genBinary :: FilePath -> Exp Void -> IO ()
+genBinary :: FilePath -> Syntax Void -> IO ()
 genBinary fp ex = do
   let obj = fp <> ".o"
   genObject obj ex

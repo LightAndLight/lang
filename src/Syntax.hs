@@ -1,97 +1,57 @@
 {-# language DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
+{-# language MultiParamTypeClasses #-}
 {-# language StandaloneDeriving #-}
 {-# language FlexibleContexts, RecursiveDo, ScopedTypeVariables #-}
 {-# language TemplateHaskell #-}
 module Syntax where
 
-import Bound.Scope.Simple (Scope, fromScope, toScope)
+import Bound.Class ((>>>=))
+import Bound.Scope.Simple (Scope, bitraverseScope)
 import Bound.TH (makeBound)
-import Bound.Var (Var(..), unvar)
-import Control.Monad.Fix (MonadFix)
-import Control.Monad.State (MonadState, evalStateT, get, put)
-import Control.Monad.Writer (MonadWriter, runWriter, tell)
+import Bound.Var (Var)
+import Control.Monad (ap)
+import Data.Bifunctor.TH (deriveBifunctor, deriveBifoldable, deriveBitraversable)
 import Data.Deriving (deriveEq1, deriveShow1)
+import Data.Functor.Identity (Identity(..))
 import Data.Functor.Classes (eq1, showsPrec1)
-import Data.List (elemIndex, union)
-import Data.Word (Word64)
+import Data.Text (Text)
 
-data Op = Add | Mult deriving (Eq, Show)
+import Biscope (Bisubst(..), BiscopeL, BiscopeR)
+import Core.Type (Type, Kind)
+import Operators (Op(..))
 
-data Exp a
-  = Var a
-  | UInt64 !Word64
-  | Bin Op (Exp a) (Exp a)
-  | Lam (Scope () Exp a)
-  | App (Exp a) (Exp a)
+data Syntax ki ty tm
+  = Var tm
+  | Natural !Integer
+  | Bin Op (Syntax ki ty tm) (Syntax ki ty tm)
+  | Lam (Maybe Text) (BiscopeR () (Type ki) (Syntax ki) ty tm)
+  | App (Syntax ki ty tm) (Syntax ki ty tm)
+  | AppType (Syntax ki ty tm) (Type ki ty)
+  | AbsType (Maybe Text) (Kind ki) (BiscopeL () (Type ki) (Syntax ki) ty tm)
   deriving (Functor, Foldable, Traversable)
-makeBound ''Exp
-deriveEq1 ''Exp
-deriveShow1 ''Exp
-instance Eq a => Eq (Exp a) where; (==) = eq1
-instance Show a => Show (Exp a) where; showsPrec = showsPrec1
+deriveBifunctor ''Syntax
+deriveBifoldable ''Syntax
+deriveBitraversable ''Syntax
 
-data Pos = Fst | Snd
-  deriving (Eq, Show)
+instance Bisubst (Syntax ki) (Type ki) where
+  bireturn = Var
+  bisubst f g tm =
+    case tm of
+      Var a -> _
+      Natural a -> _
+      Bin a b c -> _
+      Lam a b -> _
+      App a b -> _
+      AppType a b -> _
+      AbsType a b c -> _
 
-data LL a
-  = LVar a
-  | LUInt64 !Word64
-  | LName String
-  | LProduct [LL a]
-  | LProj !Word64 (LL a)
-  | LClosure (LL a) (LL a)
-  | LUnpack (LL a) (Scope Pos LL a)
-  | LApp (LL a) (LL a) (LL a)
-  | LBin Op (LL a) (LL a)
-  deriving (Functor, Foldable, Traversable)
-makeBound ''LL
-deriveEq1 ''LL
-deriveShow1 ''LL
-instance Eq a => Eq (LL a) where; (==) = eq1
-instance Show a => Show (LL a) where; showsPrec = showsPrec1
+instance Applicative (Syntax ki ty) where; pure = return; (<*>) = ap
+instance Monad (Syntax ki ty) where; return = bireturn; (>>=) a f = bisubst pure f a
 
-data LVar = LEnv | LArg
-  deriving (Eq, Show)
+deriveEq1 ''Syntax
+deriveShow1 ''Syntax
+instance (Eq ki, Eq ty, Eq tm) => Eq (Syntax ki ty tm) where; (==) = eq1
+instance (Show ki, Show ty, Show tm) => Show (Syntax ki ty tm) where; showsPrec = showsPrec1
 
-data LDef a = LDef { lName :: String, lBody :: Scope LVar LL a }
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-freshName :: MonadState [a] m => m a
-freshName = do
-  s <- get
-  case s of
-    s' : ss' -> s' <$ put ss'
-    [] -> undefined
-
-trans :: forall a. Eq a => Exp a -> (LL a, [LDef a])
-trans ex = (val, defs)
-  where
-    ((val, _), defs) = runWriter $ evalStateT (go (LVar . F) ex) (('f' :) . show <$> [0::Int ..])
-
-    go ::
-      forall b m.
-      (Eq b, MonadWriter [LDef a] m, MonadState [String] m, MonadFix m) =>
-      (b -> LL (Var LVar a)) ->
-      Exp b -> m (LL b, [b])
-    go _ (Var a) = pure (LVar a, [a])
-    go f (Lam a) = do
-      rec
-        let
-          vs' = foldr (unvar (const id) (:)) [] vs
-          replace =
-            unvar
-              (\_ -> LVar $ B LArg)
-              (\b -> maybe (f b) (\ix -> LProj (fromIntegral ix) (LVar $ B LEnv)) $ elemIndex b vs')
-        (a', vs) <- go replace $ fromScope a
-      n <- freshName
-      tell [LDef n $ toScope $ a' >>= replace]
-      pure (LClosure (LName n) (LProduct $ LVar <$> vs'), vs')
-    go f (App a b) = do
-      (a', vs1) <- go f a
-      (b', vs2) <- go f b
-      pure (LUnpack a' (toScope $ LApp (LVar $ B Fst) (LVar $ B Snd) (F <$> b')), vs1 `union` vs2)
-    go f (Bin o a b) = do
-      (a', vs1) <- go f a
-      (b', vs2) <- go f b
-      pure (LBin o a' b', vs1 `union` vs2)
-    go _ (UInt64 a) = pure (LUInt64 a, [])
+instTy :: Type ki ty -> Syntax ki (Var () ty) tm -> Syntax ki ty tm
+instTy = _

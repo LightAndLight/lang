@@ -2,7 +2,7 @@
 {-# language OverloadedStrings #-}
 {-# language RecursiveDo #-}
 {-# language ScopedTypeVariables #-}
-module Codegen.LLVM where
+module Codegen where
 
 import Bound.Scope.Simple (fromScope)
 import Bound.Var (unvar)
@@ -24,7 +24,8 @@ import qualified LLVM.IRBuilder.Instruction as LLVM
 import qualified LLVM.IRBuilder.Monad as LLVM
 import qualified LLVM.IRBuilder.Module as LLVM
 
-import Syntax
+import Closure
+import Operators (Op(..))
 
 opaquePtr :: LLVM.Type
 opaquePtr = LLVM.ptr LLVM.i8
@@ -67,16 +68,16 @@ cg_expr ::
   Operand ->
   (String -> Operand) ->
   (a -> Operand) ->
-  LL a ->
+  Closure a ->
   m Operand
 cg_expr closureType malloc names = go
   where
-    go :: forall b. (b -> Operand) -> LL b -> m Operand
+    go :: forall b. (b -> Operand) -> Closure b -> m Operand
     go var ex =
       case ex of
-        LVar a -> pure $ var a
-        LName a -> pure $ names a
-        LUInt64 a -> do
+        Var a -> pure $ var a
+        Name a -> pure $ names a
+        UInt64 a -> do
           size <- LLVM.int32 8
           ptr <- fromOpaquePtr (LLVM.ptr LLVM.i64) =<< LLVM.call malloc [(size, [])]
 
@@ -84,7 +85,7 @@ cg_expr closureType malloc names = go
           LLVM.store ptr 0 val
 
           toOpaquePtr ptr
-        LProduct as -> do
+        Product as -> do
           let las = length as
           size <- LLVM.int32 $ fromIntegral las
           loc <-
@@ -97,13 +98,13 @@ cg_expr closureType malloc names = go
             a' <- go var a
             LLVM.store ptr 0 a'
           toOpaquePtr loc
-        LProj n a -> do
+        Proj n a -> do
           a' <- fromOpaquePtr (LLVM.ptr $ LLVM.ArrayType (n+1) opaquePtr) =<< go var a
           _0 <- LLVM.int32 0
           ix <- LLVM.int32 $ fromIntegral n
           ptr <- LLVM.gep a' [_0, ix]
           LLVM.load ptr 0
-        LBin o a b -> do
+        Bin o a b -> do
           va <- flip LLVM.load 0 =<< fromOpaquePtr (LLVM.ptr LLVM.i64) =<< go var a
           vb <- flip LLVM.load 0 =<< fromOpaquePtr (LLVM.ptr LLVM.i64) =<< go var b
 
@@ -115,12 +116,12 @@ cg_expr closureType malloc names = go
           LLVM.store ptr 0 val
 
           toOpaquePtr ptr
-        LApp f e x -> do
+        App f e x -> do
           f' <- go var f
           e' <- go var e
           x' <- go var x
           LLVM.call f' [(e', []), (x', [])]
-        LClosure a b -> do
+        Closure a b -> do
           size <- LLVM.int32 2
           loc <-
             fromOpaquePtr (LLVM.ptr closureType) =<<
@@ -139,7 +140,7 @@ cg_expr closureType malloc names = go
           LLVM.store ptr1 0 b'
 
           toOpaquePtr loc
-        LUnpack a b -> do
+        Unpack a b -> do
           a' <- fromOpaquePtr (LLVM.ptr closureType) =<< go var a
 
           _0 <- LLVM.int32 0
@@ -161,7 +162,7 @@ cgWithResult ::
   (a -> Operand) ->
   (Operand -> LLVM.IRBuilderT m ()) ->
   LLVM.Type ->
-  (LL a, [LDef a]) ->
+  (Closure a, [LDef a]) ->
   m Operand
 cgWithResult var k ktype (val, ds) = do
   closureType <-
@@ -182,7 +183,7 @@ cgWithResult var k ktype (val, ds) = do
     k val'
 
 -- prints an int64 result
-cgModule :: (LL Void, [LDef Void]) -> LLVM.Module
+cgModule :: (Closure Void, [LDef Void]) -> LLVM.Module
 cgModule code =
   LLVM.buildModule "testModule" .
   LLVM.runIRBuilderT LLVM.emptyIRBuilder $ do
