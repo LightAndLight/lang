@@ -1,7 +1,7 @@
 {-# language OverloadedLists #-}
 module Parser where
 
-import Bound.Scope.Simple (abstract1)
+import Biscope (abs1BiscopeR)
 import Control.Applicative ((<|>), some)
 import Data.Text (Text)
 import Text.Trifecta
@@ -28,10 +28,10 @@ ident =
   , _styleReservedHighlight = Highlight.ReservedIdentifier
   }
 
-expr :: (Monad m, TokenParsing m) => m (Syntax Text)
+expr :: (Monad m, TokenParsing m) => m (Syntax Text Text)
 expr = lam <|> compound
   where
-    lam = (\x -> Lam (Just x) . abstract1 x) <$ char '\\' <*> ident <*> expr
+    lam = (\x -> Lam (Just x) . abs1BiscopeR x) <$ char '\\' <*> ident <*> expr
     app = foldl1 App <$> some atom
     opTable =
       [ [Infix (Bin Mult <$ char '*') AssocLeft]
