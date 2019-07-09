@@ -1,18 +1,22 @@
 {-# language OverloadedLists #-}
 {-# language OverloadedStrings #-}
+{-# language RankNTypes #-}
 module Parser where
 
 import Biscope (abs1BiscopeR, abs1BiscopeL)
 import Bound.Scope.Simple (abstract1)
-import Control.Applicative ((<|>), some, many, liftA2)
+import Control.Applicative ((<|>), some, many)
+import Data.String (fromString)
 import Data.Text (Text)
+import Data.Text.Encoding (encodeUtf8)
 import Text.Trifecta
   ( CharParsing, TokenParsing, IdentifierStyle(..)
-  , char, lower, upper, alphaNum
+  , lower, upper, alphaNum
   )
 import Text.Parser.Expression (Operator(..), Assoc(..), buildExpressionParser)
 
 import qualified Text.Trifecta as Trifecta
+import qualified Text.Trifecta.Delta as Delta
 import qualified Text.Parser.Token.Highlight as Highlight
 
 import Core.Type (Type(..), Rep(..))
@@ -86,25 +90,30 @@ type_ =
   Trifecta.parens ((,) <$> ident <* Trifecta.colon <*> type_) <* Trifecta.dot <*>
   type_
 
+atSymbol :: TokenParsing m => m Char
+atSymbol = Trifecta.symbolic '@'
+
 expr :: (Monad m, TokenParsing m) => m (Syntax Text Text)
 expr = lam <|> compound
   where
     lam =
       either
         (\n -> Lam (Just n) . abs1BiscopeR n)
-        (\(n, k) -> AbsType (Just n) k . abs1BiscopeL n) <$ char '\\' <*>
+        (\(n, k) -> AbsType (Just n) k . abs1BiscopeL n) <$ Trifecta.symbolic '\\' <*>
       (Left <$> ident <|>
-       Right <$ char '@' <*> liftA2 (,) ident (Trifecta.colon *> type_)) <*>
+       Right <$ atSymbol <*>
+       Trifecta.parens
+         ((,) <$> ident <* Trifecta.colon <*> type_)) <* Trifecta.textSymbol "->" <*>
       expr
 
     app =
       foldl (\acc -> either (App acc) (AppType acc)) <$>
       atom <*>
-      many (Left <$> atom <|> Right <$ char '@' <*> tyAtom)
+      many (Left <$> atom <|> Right <$ atSymbol <*> tyAtom)
 
     opTable =
-      [ [Infix (Bin Mult <$ char '*') AssocLeft]
-      , [Infix (Bin Add <$ char '+') AssocLeft]
+      [ [Infix (Bin Mult <$ Trifecta.symbolic '*') AssocLeft]
+      , [Infix (Bin Add <$ Trifecta.symbolic '+') AssocLeft]
       ]
 
     compound = buildExpressionParser opTable app
@@ -112,3 +121,11 @@ expr = lam <|> compound
     atom =
       Trifecta.parens expr <|>
       Natural <$> Trifecta.decimal
+
+-- | Only use this for short strings
+parse :: (forall m. (Monad m, TokenParsing m) => m a) -> FilePath -> Text -> Trifecta.Result a
+parse m fn = Trifecta.runParser m (Delta.Directed (fromString fn) 0 0 0 0) . encodeUtf8
+
+-- | Use this for files
+parseFile :: (forall m. (Monad m, TokenParsing m) => m a) -> FilePath -> IO (Trifecta.Result a)
+parseFile = Trifecta.parseFromFileEx

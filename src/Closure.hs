@@ -4,7 +4,8 @@
 {-# language TemplateHaskell #-}
 module Closure where
 
-import Bound.Scope.Simple (Scope, fromScope, toScope)
+import Biscope (fromBiscopeR, fromBiscopeL)
+import Bound.Scope.Simple (Scope, toScope)
 import Bound.TH (makeBound)
 import Bound.Var (Var(..), unvar)
 import Control.Monad.Fix (MonadFix)
@@ -52,18 +53,20 @@ freshName = do
     s' : ss' -> s' <$ put ss'
     [] -> undefined
 
-trans :: forall a. Eq a => Core a -> (Closure a, [LDef a])
+trans :: forall ty a. Eq a => Core ty a -> (Closure a, [LDef a])
 trans ex = (val, defs)
   where
     ((val, _), defs) = runWriter $ evalStateT (go (Var . F) ex) (('f' :) . show <$> [0::Int ..])
 
     go ::
-      forall b m.
+      forall x b m.
       (Eq b, MonadWriter [LDef a] m, MonadState [String] m, MonadFix m) =>
       (b -> Closure (Var LVar a)) ->
-      Core b -> m (Closure b, [b])
+      Core x b -> m (Closure b, [b])
     go _ (Core.Var a) = pure (Var a, [a])
-    go f (Core.Lam _ a) = do
+    go f (Core.AppType a _) = go f a
+    go f (Core.AbsType _ _ a) = go f $ fromBiscopeL a
+    go f (Core.Lam _ _ a) = do
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
@@ -71,7 +74,7 @@ trans ex = (val, defs)
             unvar
               (\_ -> Var $ B LArg)
               (\b -> maybe (f b) (\ix -> Proj (fromIntegral ix) (Var $ B LEnv)) $ elemIndex b vs')
-        (a', vs) <- go replace $ fromScope a
+        (a', vs) <- go replace $ fromBiscopeR a
       n <- freshName
       tell [LDef n $ toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs'), vs')

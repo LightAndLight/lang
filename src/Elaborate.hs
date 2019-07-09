@@ -47,6 +47,7 @@ data TypeError
   | TypeMismatch (Type Text) (Type Text)
   | ExpectedNumeric (Type Text)
   | ExpectedArrow (Type Text)
+  | LamIsNot (Type Text)
   | ExpectedForall (Type Text)
   | Can'tInferType (Syntax Text Text)
   deriving Show
@@ -232,7 +233,7 @@ check tm ty =
           pure (Core.Lam mn s $ toBiscopeR a')
         _ -> do
           typeNames <- (unnamed .) <$> asks eTypeNames
-          throwError $ ExpectedArrow (typeNames <$> ty)
+          throwError $ LamIsNot (typeNames <$> ty)
     _ -> do
       (tm', ty') <- infer tm
       unless (ty == ty') $ do

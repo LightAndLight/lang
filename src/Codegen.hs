@@ -10,6 +10,7 @@ import Control.Monad.Fix (MonadFix)
 import Data.Foldable (for_, foldrM)
 import Data.Map (Map)
 import Data.Maybe (fromJust)
+import Data.String (fromString)
 import Data.Void (Void, absurd)
 import LLVM.AST.Operand (Operand)
 import LLVM.IRBuilder (MonadIRBuilder)
@@ -182,10 +183,9 @@ cgWithResult var k ktype (val, ds) = do
     val' <- cg_expr closureType malloc names var val
     k val'
 
--- prints an int64 result
-cgModule :: (Closure Void, [LDef Void]) -> LLVM.Module
-cgModule code =
-  LLVM.buildModule "testModule" .
+cgModule_intres :: String -> (Closure Void, [LDef Void]) -> LLVM.Module
+cgModule_intres modName code =
+  LLVM.buildModule (fromString modName) .
   LLVM.runIRBuilderT LLVM.emptyIRBuilder $ do
     printInt <- LLVM.extern "printInt" [LLVM.i64] LLVM.void
     cgWithResult
