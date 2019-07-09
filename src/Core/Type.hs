@@ -26,14 +26,17 @@ data Type ty
   -- 'kinds'
   | TKRep
   | TKPi (Maybe Text) (Type ty) (Scope () Type ty)
-  | TKType0 (Type ty)
-  | TKTypeN !Integer
+  | TKType !Integer
   deriving (Functor, Foldable, Traversable)
+infixl 5 `TApp`
 makeBound ''Type
 deriveEq1 ''Type
 deriveShow1 ''Type
 instance Eq ty => Eq (Type ty) where; (==) = eq1
 instance Show ty => Show (Type ty) where; showsPrec = showsPrec1
+
+pattern TArrow :: Type ty -> Type ty -> Type ty -> Type ty -> Type ty
+pattern TArrow r1 r2 s t = TApp (TApp (TApp (TApp TArr r1) r2) s) t
 
 tforall_ :: (Text, Type Text) -> Type Text -> Type Text
 tforall_ (a, s) = TForall (Just a) s . abstract1 a
