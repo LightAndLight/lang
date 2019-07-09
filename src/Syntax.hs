@@ -55,3 +55,8 @@ instance (Show ty, Show tm) => Show (Syntax ty tm) where; showsPrec = showsPrec1
 
 instTy :: Type ty -> Syntax (Var () ty) tm -> Syntax ty tm
 instTy t = bisubst (unvar (\() -> t) pure) pure
+
+data Def ty tm
+  = Sig tm (Type ty)
+  | Def tm (Syntax ty tm)
+  deriving Show

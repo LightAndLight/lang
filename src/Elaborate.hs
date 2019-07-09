@@ -4,22 +4,29 @@
 {-# language MultiParamTypeClasses #-}
 {-# language OverloadedStrings #-}
 {-# language PatternSynonyms #-}
+{-# language RecursiveDo #-}
+{-# language ScopedTypeVariables #-}
 module Elaborate where
 
 import Biscope (fromBiscopeL, toBiscopeL, fromBiscopeR, toBiscopeR)
 import Bound.Scope.Simple (fromScope, toScope, instantiate1)
 import Bound.Var (Var(..), unvar)
-import Control.Monad (unless)
+import Control.Applicative ((<|>))
+import Control.Monad (unless, when)
 import Control.Monad.Except (MonadError, ExceptT, runExceptT, throwError)
+import Control.Monad.Fix (MonadFix)
 import Control.Monad.Reader (MonadReader, ReaderT, runReaderT, asks, withReaderT)
 import Control.Monad.Writer (Writer, runWriter, tell)
 import Data.Bifunctor (bimap)
 import Data.DList (DList)
+import Data.Foldable (traverse_)
 import Data.Maybe (fromMaybe)
+import Data.Map (Map)
 import Data.Text (Text)
 import Data.Traversable (for)
 
 import qualified Data.DList as DList
+import qualified Data.Map as Map
 
 import Core (Core)
 import qualified Core
@@ -50,6 +57,9 @@ data TypeError
   | LamIsNot (Type Text)
   | ExpectedForall (Type Text)
   | Can'tInferType (Syntax Text Text)
+  | DuplicateDefinition Text
+  | SigMissingBody Text
+  | DefMissingSig Text
   deriving Show
 
 data ElabEnv ty tm
@@ -97,7 +107,11 @@ newtype Elab ty tm a
   { unElab ::
       ReaderT (ElabEnv ty tm)
       (ExceptT TypeError (Writer (DList Warning))) a
-  } deriving (Functor, Applicative, Monad, MonadError TypeError, MonadReader (ElabEnv ty tm))
+  } deriving
+  ( Functor, Applicative, Monad
+  , MonadError TypeError, MonadReader (ElabEnv ty tm)
+  , MonadFix
+  )
 
 data ElabResult a
   = ElabResult
@@ -280,3 +294,67 @@ infer tm =
       varNames <- (unnamed .) <$> asks eVarNames
       typeNames <- (unnamed .) <$> asks eTypeNames
       throwError $ Can'tInferType (bimap typeNames varNames tm)
+
+checkDefs ::
+  forall ty tm.
+  (Eq ty, Ord tm) =>
+  (tm -> Text) ->
+  [Syntax.Def ty tm] ->
+  Elab ty tm [Core.Def ty tm]
+checkDefs name defs = do
+  (paired, loneDefs, loneSigs) <- zipDefs mempty mempty mempty defs
+  rec
+    defs' <-
+      mapElabEnv (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n }) $ do
+
+        traverse_ (\n -> throwError . DefMissingSig $ name n) loneDefs
+        traverse_ (\n -> throwError . SigMissingBody $ name n) loneSigs
+
+        traverse
+          (\(v, t) -> do
+              checkKind t $ TApp (TKType 0) (TRep RPtr)
+              v' <- check v t
+              pure (v', t))
+          paired
+
+  pure $ Map.foldrWithKey (\n (v, _) -> (Core.Def n v :)) [] defs'
+  where
+    zipDefs ::
+      Ord tm =>
+      Map tm (Syntax ty tm, Type ty) -> -- paired
+      Map tm (Syntax ty tm) -> -- unpaired
+      Map tm (Type ty) -> -- unpaired
+      [Syntax.Def ty tm] ->
+      Elab ty tm
+        ( Map tm (Syntax ty tm, Type ty)
+        , [tm]
+        , [tm]
+        )
+    zipDefs paired loneDefs loneSigs [] =
+      pure
+        ( paired
+        , Map.keys loneDefs
+        , Map.keys loneSigs
+        )
+    zipDefs paired loneDefs loneSigs (d:ds) =
+      case d of
+        Syntax.Def n v -> do
+          checkNotPaired n paired
+          when (Map.member n loneDefs) . throwError $ DuplicateDefinition (name n)
+          case Map.lookup n loneSigs of
+            Nothing ->
+              zipDefs paired (Map.insert n v loneDefs) loneSigs ds
+            Just sig ->
+              zipDefs (Map.insert n (v, sig) paired) loneDefs (Map.delete n loneSigs) ds
+        Syntax.Sig n t -> do
+          checkNotPaired n paired
+          when (Map.member n loneSigs) . throwError $ DuplicateDefinition (name n)
+          case Map.lookup n loneDefs of
+            Nothing ->
+              zipDefs paired loneDefs (Map.insert n t loneSigs) ds
+            Just def ->
+              zipDefs (Map.insert n (def, t) paired) (Map.delete n loneDefs) loneSigs ds
+
+    checkNotPaired :: Ord tm => tm -> Map tm x -> Elab ty tm ()
+    checkNotPaired n mp =
+      when (Map.member n mp) . throwError $ DuplicateDefinition (name n)

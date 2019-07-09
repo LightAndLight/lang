@@ -50,3 +50,6 @@ deriveEq1 ''Core
 deriveShow1 ''Core
 instance (Eq ty, Eq tm) => Eq (Core ty tm) where; (==) = eq1
 instance (Show ty, Show tm) => Show (Core ty tm) where; showsPrec = showsPrec1
+
+data Def ty tm = Def tm (Core ty tm)
+  deriving Show
