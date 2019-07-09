@@ -295,29 +295,32 @@ infer tm =
       typeNames <- (unnamed .) <$> asks eTypeNames
       throwError $ Can'tInferType (bimap typeNames varNames tm)
 
-checkDefs ::
-  forall ty tm.
+checkDefsThen ::
+  forall ty tm a.
   (Eq ty, Ord tm) =>
   (tm -> Text) ->
   [Syntax.Def ty tm] ->
-  Elab ty tm [Core.Def ty tm]
-checkDefs name defs = do
+  Elab ty tm a ->
+  Elab ty tm ([Core.Def ty tm], a)
+checkDefsThen name defs ma = do
   (paired, loneDefs, loneSigs) <- zipDefs mempty mempty mempty defs
   rec
-    defs' <-
+    (defs', a) <-
       mapElabEnv (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n }) $ do
 
         traverse_ (\n -> throwError . DefMissingSig $ name n) loneDefs
         traverse_ (\n -> throwError . SigMissingBody $ name n) loneSigs
 
-        traverse
-          (\(v, t) -> do
+        (,) <$>
+          traverse
+            (\(v, t) -> do
               checkKind t $ TApp (TKType 0) (TRep RPtr)
               v' <- check v t
               pure (v', t))
-          paired
+            paired <*>
+          ma
 
-  pure $ Map.foldrWithKey (\n (v, _) -> (Core.Def n v :)) [] defs'
+  pure (Map.foldrWithKey (\n (v, _) -> (Core.Def n v :)) [] defs', a)
   where
     zipDefs ::
       Ord tm =>
