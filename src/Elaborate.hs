@@ -52,9 +52,10 @@ data TypeError
   | Can'tInferKind (Type Text)
   | NotSubkindOf (Type Text) (Type Text)
   | TypeMismatch (Type Text) (Type Text)
-  | ExpectedNumeric (Type Text)
+  | NaturalIsNot (Type Text)
   | ExpectedArrow (Type Text)
   | LamIsNot (Type Text)
+  | AbsTypeIsNot (Type Text)
   | ExpectedForall (Type Text)
   | Can'tInferType (Syntax Text Text)
   | DuplicateDefinition Text
@@ -239,7 +240,7 @@ check tm ty =
           pure $ Core.UInt64 (fromIntegral n)
         _ -> do
           typeNames <- (unnamed .) <$> asks eTypeNames
-          throwError $ ExpectedNumeric (typeNames <$> ty)
+          throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a ->
       case ty of
         TArrow _ _ s t -> do
@@ -248,6 +249,17 @@ check tm ty =
         _ -> do
           typeNames <- (unnamed .) <$> asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
+    Syntax.AbsType mn k rest ->
+      case ty of
+        TForall _ k' restTy -> do
+          unless (k == k') $ do
+            typeNames <- (unnamed .) <$> asks eTypeNames
+            throwError $ KindMismatch (typeNames <$> k') (typeNames <$> k)
+          rest' <- mapElabEnv (addTy k mn) $ check (fromBiscopeL rest) (fromScope restTy)
+          pure $ Core.AbsType mn k (toBiscopeL rest')
+        _ -> do
+          typeNames <- (unnamed .) <$> asks eTypeNames
+          throwError $ AbsTypeIsNot (typeNames <$> ty)
     _ -> do
       (tm', ty') <- infer tm
       unless (ty == ty') $ do
@@ -305,20 +317,23 @@ checkDefsThen ::
 checkDefsThen name defs ma = do
   (paired, loneDefs, loneSigs) <- zipDefs mempty mempty mempty defs
   rec
-    (defs', a) <-
+    defs' <-
       mapElabEnv (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n }) $ do
 
         traverse_ (\n -> throwError . DefMissingSig $ name n) loneDefs
         traverse_ (\n -> throwError . SigMissingBody $ name n) loneSigs
 
-        (,) <$>
-          traverse
-            (\(v, t) -> do
-              checkKind t $ TApp (TKType 0) (TRep RPtr)
-              v' <- check v t
-              pure (v', t))
-            paired <*>
-          ma
+        traverse
+          (\(v, t) -> do
+            checkKind t $ TApp (TKType 0) (TRep RPtr)
+            v' <- check v t
+            pure (v', t))
+          paired
+
+    a <-
+      mapElabEnv
+        (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n })
+        ma
 
   pure (Map.foldrWithKey (\n (v, _) -> (Core.Def n v :)) [] defs', a)
   where

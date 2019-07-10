@@ -6,7 +6,10 @@
 {-# language TypeFamilies #-}
 module Syntax where
 
-import Biscope (Bisubst(..), BiscopeL, BiscopeR, bisubstBiscopeR, bisubstBiscopeL)
+import Biscope
+  ( Bisubst(..), BiscopeL, BiscopeR, bisubstBiscopeR, bisubstBiscopeL
+  , abs1BiscopeL, abs1BiscopeR
+  )
 import Bound.Var (Var, unvar)
 import Control.Monad (ap)
 import Data.Bifunctor.TH (deriveBifunctor, deriveBifoldable, deriveBitraversable)
@@ -29,6 +32,12 @@ data Syntax ty tm
 deriveBifunctor ''Syntax
 deriveBifoldable ''Syntax
 deriveBitraversable ''Syntax
+
+lam :: Text -> Syntax ty Text -> Syntax ty Text
+lam n = Lam (Just n) . abs1BiscopeR n
+
+absType :: (Text, Type Text) -> Syntax Text tm -> Syntax Text tm
+absType (n, k) = AbsType (Just n) k . abs1BiscopeL n
 
 instance Bisubst Syntax where
   type Inner Syntax = Type

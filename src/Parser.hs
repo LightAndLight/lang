@@ -94,9 +94,9 @@ atSymbol :: TokenParsing m => m Char
 atSymbol = Trifecta.symbolic '@'
 
 expr :: (Monad m, TokenParsing m) => m (Syntax Text Text)
-expr = lam <|> compound
+expr = lambda <|> compound
   where
-    lam =
+    lambda =
       either
         (\n -> Lam (Just n) . abs1BiscopeR n)
         (\(n, k) -> AbsType (Just n) k . abs1BiscopeL n) <$ Trifecta.symbolic '\\' <*>
