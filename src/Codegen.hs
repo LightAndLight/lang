@@ -9,7 +9,7 @@ import Bound.Var (unvar)
 import Control.Monad.Fix (MonadFix)
 import Data.Foldable (for_, foldrM)
 import Data.Map (Map)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromMaybe, fromJust)
 import Data.String (fromString)
 import Data.Text (Text)
 import LLVM.AST.Operand (Operand)
@@ -44,23 +44,27 @@ gennedNames ns = ns . ("closure$" <>)
 definedNames :: (Text -> a) -> Text -> a
 definedNames ns = ns . ("def$" <>)
 
-cg_def ::
+valdefName :: ValDef Text -> Text
+valdefName (ValDef ln _) = "def$" <> ln
+
+cg_valdef ::
+  (MonadModuleBuilder m, MonadIRBuilder m) =>
+  LLVM.Type ->
+  Operand ->
+  (Text -> Operand) ->
+  ValDef Text ->
+  m Operand
+cg_valdef closureType malloc names (ValDef _ lb) =
+  cg_expr closureType malloc names lb
+
+cg_fundef ::
   MonadModuleBuilder m =>
   LLVM.Type ->
   Operand ->
   (Text -> Operand) ->
-  Def Text ->
+  FunDef Text ->
   m (Map Text Operand)
-cg_def closureType malloc names (UserDef ln lb) = do
-  let
-    name = "def$" <> ln
-    funName = LLVM.mkName $ Text.unpack name
-    retTy = opaquePtr
-  n <- LLVM.function funName [] retTy $ \_ -> do
-    a' <- cg_expr closureType malloc names lb
-    LLVM.ret a'
-  pure $ Map.singleton name n
-cg_def closureType malloc names (GenDef ln lb) = do
+cg_fundef closureType malloc names (FunDef ln lb) = do
   let
     name = "closure$" <> ln
     funName = LLVM.mkName $ Text.unpack name
@@ -87,7 +91,7 @@ cg_expr ::
   Closure Text ->
   m Operand
 cg_expr ct malloc names =
-  cg_expr_inner ct malloc (gennedNames names) (flip LLVM.call [] . definedNames names)
+  cg_expr_inner ct malloc (gennedNames names) (pure . definedNames names)
 
 cg_expr_inner ::
   forall m a.
@@ -189,9 +193,9 @@ cgWithResult ::
   (MonadModuleBuilder m, MonadIRBuilder m, MonadFix m) =>
   (Operand -> LLVM.IRBuilderT m ()) ->
   LLVM.Type ->
-  ([Def Text], Closure Text) ->
+  ([FunDef Text], [ValDef Text], Closure Text) ->
   m Operand
-cgWithResult k ktype (ds, val) = do
+cgWithResult k ktype (fds, vds, val) = do
   closureType <-
     LLVM.typedef "Closure" . Just $
     LLVM.StructureType
@@ -203,16 +207,33 @@ cgWithResult k ktype (ds, val) = do
   rec
     let
       names :: Text -> Operand
-      names = fromJust . flip Map.lookup ds'
-    ds' <-
+      names = fromJust . flip Map.lookup fds'
+    fds' <-
       foldrM
-        (\d rest -> (<> rest) <$> cg_def closureType malloc names d)
+        (\d rest -> (<> rest) <$> cg_fundef closureType malloc names d)
         mempty
-        ds
-  LLVM.function "main" [] ktype $ \_ ->
-    k =<< cg_expr closureType malloc names val
+        fds
+  LLVM.function "main" [] ktype $ \_ -> do
+    rec
+      let names' n = fromMaybe (names n) (Map.lookup n vds')
+      vds' <-
+        snd <$>
+        foldrM
+          (\d (next, rest) -> do
+              let n = valdefName d
+              _ <- LLVM.block `LLVM.named` fromString (Text.unpack n)
+              o <- cg_valdef closureType malloc names' d
+              LLVM.br next
+              pure (LLVM.mkName $ Text.unpack n, Map.insert n o rest))
+          ("def$main", mempty)
+          vds
+    _ <- LLVM.block `LLVM.named` "def$main"
+    k =<< cg_expr closureType malloc names' val
 
-cgModule_intres :: String -> ([Def Text], Closure Text) -> LLVM.Module
+cgModule_intres ::
+  String ->
+  ([FunDef Text], [ValDef Text], Closure Text) ->
+  LLVM.Module
 cgModule_intres modName code =
   LLVM.buildModule (fromString modName) .
   LLVM.runIRBuilderT LLVM.emptyIRBuilder $ do

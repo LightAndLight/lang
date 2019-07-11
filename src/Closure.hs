@@ -46,9 +46,10 @@ instance Show a => Show (Closure a) where; showsPrec = showsPrec1
 data LVar = LEnv | LArg
   deriving (Eq, Show)
 
-data Def tm
-  = GenDef Text (Scope LVar Closure tm)
-  | UserDef tm (Closure tm)
+data FunDef tm = FunDef Text (Scope LVar Closure tm)
+  deriving (Eq, Show, Functor, Foldable, Traversable)
+
+data ValDef tm = ValDef tm (Closure tm)
   deriving (Eq, Show, Functor, Foldable, Traversable)
 
 freshName :: MonadState [a] m => m a
@@ -60,18 +61,19 @@ freshName = do
 
 trans ::
   forall ty tm m.
-  (MonadState [Text] m, MonadFix m, Eq tm) =>
-  Core ty tm -> m ([Def tm], Closure tm)
-trans ex = do
-  ((val, _), defs) <- runWriterT $ go (Var . F) ex
-  pure (defs, val)
+  ( MonadState [Text] m
+  , MonadWriter [FunDef tm] m
+  , MonadFix m
+  , Eq tm
+  ) =>
+  Core ty tm -> m (Closure tm)
+trans ex = fst <$> go (Var . F) ex
   where
-
     go ::
-      forall x b n.
-      (Eq b, MonadWriter [Def tm] n, MonadState [Text] n, MonadFix n) =>
+      forall x b.
+      Eq b =>
       (b -> Closure (Var LVar tm)) ->
-      Core x b -> n (Closure b, [b])
+      Core x b -> m (Closure b, [b])
     go _ (Core.Var a) = pure (Var a, [a])
     go f (Core.AppType a _) = go f a
     go f (Core.AbsType _ _ a) = go f $ fromBiscopeL a
@@ -85,7 +87,7 @@ trans ex = do
               (\b -> maybe (f b) (\ix -> Proj (fromIntegral ix) (Var $ B LEnv)) $ elemIndex b vs')
         (a', vs) <- go replace $ fromBiscopeR a
       n <- freshName
-      tell [GenDef n $ toScope $ a' >>= replace]
+      tell [FunDef n $ toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs'), vs')
     go f (Core.App a b) = do
       (a', vs1) <- go f a
@@ -99,21 +101,34 @@ trans ex = do
 
 transDef ::
   forall ty tm m.
-  (MonadState [Text] m, MonadFix m, Eq tm) =>
-  Core.Def ty tm -> m [Def tm]
-transDef (Core.Def name tm) = do
-  (ds, tm') <- trans tm
-  pure $ UserDef name tm' : ds
+  ( MonadState [Text] m
+  , MonadWriter [FunDef tm] m
+  , MonadFix m
+  , Eq tm
+  ) =>
+  Core.Def ty tm -> m (ValDef tm)
+transDef (Core.Def name tm) = ValDef name <$> trans tm
 
 transDefs ::
-  (MonadState [Text] m, MonadFix m, Eq tm) =>
-  [Core.Def ty tm] -> m [Def tm]
+  ( MonadState [Text] m
+  , MonadWriter [FunDef tm] m
+  , MonadFix m
+  , Eq tm
+  ) =>
+  [Core.Def ty tm] ->
+  m [ValDef tm]
 transDefs [] = pure []
-transDefs (d:ds) = (++) <$> transDef d <*> transDefs ds
+transDefs (d:ds) = (:) <$> transDef d <*> transDefs ds
 
-transProgram :: Eq tm => ([Core.Def ty tm], Core ty tm) -> ([Def tm], Closure tm)
-transProgram (ds, tm) =
-  flip evalState (Text.pack . ('f' :) . show <$> [0::Int ..]) $ do
-    (ds1, tm') <- trans tm
-    ds2 <- transDefs ds
-    pure (ds2 <> ds1, tm')
+transProgram ::
+  Eq tm =>
+  ([Core.Def ty tm], Core ty tm) ->
+  ([FunDef tm], [ValDef tm], Closure tm)
+transProgram (ds, tm) = (fds'', vds'', tm'')
+  where
+    ((vds'', tm''), fds'') =
+      flip evalState (Text.pack . ('f' :) . show <$> [0::Int ..]) .
+      runWriterT $ do
+        tm' <- trans tm
+        ds' <- transDefs ds
+        pure (ds', tm')

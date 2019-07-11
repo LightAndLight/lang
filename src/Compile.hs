@@ -25,7 +25,7 @@ checkProgram ::
   Type Text ->
   IO ([Core.Def Text Text], Core Text Text)
 checkProgram (ds, ex) ty = do
-  let ee = elab newElabEnv (checkDefsThen id ds $ check ex ty)
+  let ee = elab (newElabEnv id id) (checkDefsThen id ds $ check ex ty)
   traverse_ print (eWarnings ee)
   either (\err -> print err *> exitFailure) pure $ eResult ee
 

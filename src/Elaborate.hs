@@ -4,7 +4,6 @@
 {-# language MultiParamTypeClasses #-}
 {-# language OverloadedStrings #-}
 {-# language PatternSynonyms #-}
-{-# language RecursiveDo #-}
 {-# language ScopedTypeVariables #-}
 module Elaborate where
 
@@ -66,18 +65,18 @@ data TypeError
 data ElabEnv ty tm
   = ElabEnv
   { eKinds :: ty -> Maybe (Type ty)
-  , eTypeNames :: ty -> Maybe Text
+  , eTypeNames :: ty -> Text
   , eTypes :: tm -> Maybe (Type ty)
-  , eVarNames :: tm -> Maybe Text
+  , eVarNames :: tm -> Text
   }
 
-newElabEnv :: ElabEnv ty tm
-newElabEnv =
+newElabEnv :: (ty -> Text) -> (tm -> Text) -> ElabEnv ty tm
+newElabEnv tys tms =
   ElabEnv
   { eKinds = const Nothing
-  , eTypeNames = const Nothing
+  , eTypeNames = tys
   , eTypes = const Nothing
-  , eVarNames = const Nothing
+  , eVarNames = tms
   }
 
 addTy ::
@@ -88,7 +87,7 @@ addTy ::
 addTy k mn e =
   e
   { eKinds = (fmap.fmap) F . unvar (\() -> Just k) (eKinds e)
-  , eTypeNames = unvar (\() -> mn) (eTypeNames e)
+  , eTypeNames = unvar (\() -> unnamed mn) (eTypeNames e)
   , eTypes = (fmap.fmap) F . eTypes e
   }
 
@@ -100,7 +99,7 @@ addVar ::
 addVar t mn e =
   e
   { eTypes = unvar (\() -> Just t) (eTypes e)
-  , eVarNames = unvar (\() -> mn) (eVarNames e)
+  , eVarNames = unvar (\() -> unnamed mn) (eVarNames e)
   }
 
 newtype Elab ty tm a
@@ -143,7 +142,7 @@ lookupKind t = do
   case res t of
     Nothing -> do
       tyNames <- Elab $ asks eTypeNames
-      throwError $ TypeNotInScope (unnamed $ tyNames t)
+      throwError $ TypeNotInScope (tyNames t)
     Just k -> pure k
 
 lookupType :: tm -> Elab ty tm (Type ty)
@@ -152,7 +151,7 @@ lookupType t = do
   case res t of
     Nothing -> do
       varNames <- Elab $ asks eVarNames
-      throwError $ VarNotInScope (unnamed $ varNames t)
+      throwError $ VarNotInScope (varNames t)
     Just k -> pure k
 
 subkindOf :: Eq ty => Type ty -> Type ty -> Bool
@@ -174,8 +173,8 @@ checkKind ty ki = do
     typeNames <- asks eTypeNames
     throwError $
       KindMismatch
-        (unnamed . typeNames <$> ki)
-        (unnamed . typeNames <$> tKind)
+        (typeNames <$> ki)
+        (typeNames <$> tKind)
 
 inferKind ::
   Eq ty =>
@@ -190,7 +189,7 @@ inferKind ty =
         \case
           B () -> do
             typeNames <- asks eTypeNames
-            throwError $ KindEscaped (unnamed mn) (unnamed . typeNames <$> k)
+            throwError $ KindEscaped (unnamed mn) (typeNames <$> k)
           F x -> pure x
     TApp a b -> do
       aKind <- inferKind a
@@ -198,7 +197,7 @@ inferKind ty =
         TKPi _ s t -> instantiate1 b t <$ checkKind b s
         _ -> do
           typeNames <- asks eTypeNames
-          throwError $ ExpectedKPi (unnamed . typeNames <$> aKind)
+          throwError $ ExpectedKPi (typeNames <$> aKind)
     TUInt64 -> pure $ TApp (TKType 0) (TRep RI64)
     TArr ->
       pure $
@@ -220,14 +219,14 @@ inferKind ty =
           TKType n -> pure n
           _ -> do
             typeNames <- asks eTypeNames
-            throwError $ ExpectedKType (unnamed . typeNames <$> sKind)
+            throwError $ ExpectedKType (typeNames <$> sKind)
       tKind <- mapElabEnv (addTy s mn) $ inferKind (fromScope t)
       tn <-
         case tKind of
           TKType n -> pure n
           _ -> do
             typeNames <- asks eTypeNames
-            throwError $ ExpectedKType (unnamed . typeNames <$> sKind)
+            throwError $ ExpectedKType (typeNames <$> sKind)
       pure $ TApp (TKType $ max sn tn + 1) (TRep RPtr)
 
 check :: Eq ty => Syntax ty tm -> Type ty -> Elab ty tm (Core ty tm)
@@ -239,7 +238,7 @@ check tm ty =
           unless (n < 2^(64::Integer)) . warn $ WOverflow n TUInt64
           pure $ Core.UInt64 (fromIntegral n)
         _ -> do
-          typeNames <- (unnamed .) <$> asks eTypeNames
+          typeNames <- asks eTypeNames
           throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a ->
       case ty of
@@ -247,23 +246,23 @@ check tm ty =
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
           pure (Core.Lam mn s $ toBiscopeR a')
         _ -> do
-          typeNames <- (unnamed .) <$> asks eTypeNames
+          typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
     Syntax.AbsType mn k rest ->
       case ty of
         TForall _ k' restTy -> do
           unless (k == k') $ do
-            typeNames <- (unnamed .) <$> asks eTypeNames
+            typeNames <- asks eTypeNames
             throwError $ KindMismatch (typeNames <$> k') (typeNames <$> k)
           rest' <- mapElabEnv (addTy k mn) $ check (fromBiscopeL rest) (fromScope restTy)
           pure $ Core.AbsType mn k (toBiscopeL rest')
         _ -> do
-          typeNames <- (unnamed .) <$> asks eTypeNames
+          typeNames <- asks eTypeNames
           throwError $ AbsTypeIsNot (typeNames <$> ty)
     _ -> do
       (tm', ty') <- infer tm
       unless (ty == ty') $ do
-        typeNames <- (unnamed .) <$> asks eTypeNames
+        typeNames <- asks eTypeNames
         throwError $ TypeMismatch (typeNames <$> ty) (typeNames <$> ty')
       pure tm'
 
@@ -288,7 +287,7 @@ infer tm =
           b' <- check b s
           pure (Core.App a' b', t)
         _ -> do
-          typeNames <- (unnamed .) <$> asks eTypeNames
+          typeNames <- asks eTypeNames
           throwError $ ExpectedArrow (typeNames <$> aType)
     Syntax.AppType a t -> do
       (a', aType) <- infer a
@@ -297,14 +296,14 @@ infer tm =
           checkKind t k
           pure (Core.AppType a' t, instantiate1 t rest)
         _ -> do
-          typeNames <- (unnamed .) <$> asks eTypeNames
+          typeNames <- asks eTypeNames
           throwError $ ExpectedForall (typeNames <$> aType)
     Syntax.AbsType mn k a -> do
       (a', aTy) <- mapElabEnv (addTy k mn) $ infer (fromBiscopeL a)
       pure (Core.AbsType mn k $ toBiscopeL a', TForall mn k $ toScope aTy)
     _ -> do
-      varNames <- (unnamed .) <$> asks eVarNames
-      typeNames <- (unnamed .) <$> asks eTypeNames
+      varNames <- asks eVarNames
+      typeNames <- asks eTypeNames
       throwError $ Can'tInferType (bimap typeNames varNames tm)
 
 checkDefsThen ::
@@ -316,26 +315,17 @@ checkDefsThen ::
   Elab ty tm ([Core.Def ty tm], a)
 checkDefsThen name defs ma = do
   (paired, loneDefs, loneSigs) <- zipDefs mempty mempty mempty defs
-  rec
-    defs' <-
-      mapElabEnv (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n }) $ do
 
-        traverse_ (\n -> throwError . DefMissingSig $ name n) loneDefs
-        traverse_ (\n -> throwError . SigMissingBody $ name n) loneSigs
+  traverse_ (throwError . DefMissingSig . name) loneDefs
+  traverse_ (throwError . SigMissingBody . name) loneSigs
 
-        traverse
-          (\(v, t) -> do
-            checkKind t $ TApp (TKType 0) (TRep RPtr)
-            v' <- check v t
-            pure (v', t))
-          paired
+  tys <- traverse (\(_, t) -> t <$ checkKind t (TApp (TKType 0) (TRep RPtr))) paired
 
-    a <-
-      mapElabEnv
-        (\e -> e { eTypes = \n -> fmap snd (Map.lookup n defs') <|> eTypes e n })
-        ma
+  (defs', a) <-
+    mapElabEnv (\e -> e { eTypes = \n -> Map.lookup n tys <|> eTypes e n }) $
+    (,) <$> traverse (uncurry check) paired <*> ma
 
-  pure (Map.foldrWithKey (\n (v, _) -> (Core.Def n v :)) [] defs', a)
+  pure (Map.foldrWithKey (\n v -> (Core.Def n v :)) [] defs', a)
   where
     zipDefs ::
       Ord tm =>
