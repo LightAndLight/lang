@@ -19,7 +19,6 @@ import LLVM.IRBuilder.Module (MonadModuleBuilder)
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified LLVM.AST as LLVM (Module)
-import qualified LLVM.AST.Constant as LLVM
 import qualified LLVM.AST.Name as LLVM
 import qualified LLVM.AST.Type as LLVM
 import qualified LLVM.IRBuilder.Constant as LLVM
@@ -39,10 +38,6 @@ toOpaquePtr o = LLVM.bitcast o opaquePtr
 fromOpaquePtr :: MonadIRBuilder m => LLVM.Type -> Operand -> m Operand
 fromOpaquePtr = flip LLVM.bitcast
 
-closureCodeType :: LLVM.Type
-closureCodeType =
-  LLVM.ptr $ LLVM.FunctionType opaquePtr [opaquePtr, opaquePtr] False
-
 gennedNames :: (Text -> a) -> Text -> a
 gennedNames ns = ns . ("closure$" <>)
 
@@ -56,12 +51,14 @@ cg_def ::
   (Text -> Operand) ->
   Def Text ->
   m (Map Text Operand)
-cg_def _ _ _ (UserDef ln lb) = do
+cg_def closureType malloc names (UserDef ln lb) = do
   let
     name = "def$" <> ln
     funName = LLVM.mkName $ Text.unpack name
     retTy = opaquePtr
-  n <- LLVM.global funName retTy $ cg_expr_constant lb
+  n <- LLVM.function funName [] retTy $ \_ -> do
+    a' <- cg_expr closureType malloc names lb
+    LLVM.ret a'
   pure $ Map.singleton name n
 cg_def closureType malloc names (GenDef ln lb) = do
   let
@@ -80,26 +77,6 @@ cg_def closureType malloc names (GenDef ln lb) = do
           (fromScope lb)
       LLVM.ret a'
   pure $ Map.singleton name n
-
-cg_expr_constant :: forall a. Closure a -> LLVM.Constant
-cg_expr_constant = go
-  where
-    go :: Closure a -> LLVM.Constant
-    go ex =
-      case ex of
-        Var{} -> error "var not constant"
-        Name a ->
-          LLVM.GlobalReference opaquePtr (LLVM.mkName $ "closure$" <> Text.unpack a)
-        UInt64 a -> LLVM.Int 64 $ fromIntegral a
-        Product as -> LLVM.Array opaquePtr $ go <$> as
-        Proj n a -> LLVM.ExtractValue (go a) [fromIntegral n]
-        Bin o a b ->
-          case o of
-            Add -> LLVM.Add False False (go a) (go b)
-            Mult -> LLVM.Mul False False (go a) (go b)
-        App{} -> error "app not constant"
-        Closure a b -> LLVM.Struct Nothing False [go a, go b]
-        Unpack{}-> error "unpack not constant"
 
 cg_expr ::
   forall m.
@@ -219,7 +196,7 @@ cgWithResult k ktype (ds, val) = do
     LLVM.typedef "Closure" . Just $
     LLVM.StructureType
       False
-      [ closureCodeType
+      [ LLVM.ptr $ LLVM.FunctionType opaquePtr [opaquePtr, opaquePtr] False
       , opaquePtr
       ]
   malloc <- LLVM.extern "malloc" [LLVM.i32] (LLVM.ptr LLVM.i8)
