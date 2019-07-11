@@ -25,7 +25,9 @@ library
                      , Elaborate
                      , Operators
                      , Parser
+                     , Rep
                      , Syntax
+                     , Syntax.Type
   build-depends:       base ^>=4.12.0.0
                      , ansi-wl-pprint
                      , bifunctors

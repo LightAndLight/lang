@@ -17,8 +17,8 @@ import Data.Deriving (deriveEq2, deriveShow2, deriveEq1, deriveShow1)
 import Data.Functor.Classes (eq1, showsPrec1)
 import Data.Text (Text)
 
-import Core.Type (Type)
 import Operators (Op(..))
+import Syntax.Type (Type)
 
 data Syntax ty tm
   = Var tm

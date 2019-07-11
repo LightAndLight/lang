@@ -17,12 +17,12 @@ import Operators (Op)
 
 data Core ty tm
   = Var tm
-  | UInt64 !Word64
-  | Bin Op (Core ty tm) (Core ty tm)
-  | Lam (Maybe Text) (Type ty) (Kind ty) (Kind ty) (BiscopeR () Type Core ty tm)
-  | App (Core ty tm) (Core ty tm) (Kind ty) (Kind ty)
-  | AppType (Core ty tm) (Type ty)
-  | AbsType (Maybe Text) (Kind ty) (BiscopeL () Type Core ty tm)
+  | UInt64 (Type ty) !Word64
+  | Bin (Type ty) Op (Core ty tm) (Core ty tm)
+  | Lam (Type ty) (Maybe Text) (Type ty) (Kind ty) (Kind ty) (BiscopeR () Type Core ty tm)
+  | App (Type ty) (Core ty tm) (Core ty tm) (Kind ty) (Kind ty)
+  | AppType (Type ty) (Core ty tm) (Type ty)
+  | AbsType (Type ty) (Maybe Text) (Kind ty) (BiscopeL () Type Core ty tm)
   deriving (Functor, Foldable, Traversable)
 deriveBifunctor ''Core
 deriveBifoldable ''Core
@@ -34,13 +34,13 @@ instance Bisubst Core where
   bisubst f g tm =
     case tm of
       Var a -> g a
-      UInt64 a -> UInt64 a
-      Bin a b c -> Bin a (bisubst f g b) (bisubst f g c)
-      Lam a b c d e ->
-        Lam a (b >>= f) (c >>= f) (d >>= f) (bisubstBiscopeR f g e)
-      App a b c d -> App (bisubst f g a) (bisubst f g b) (c >>= f) (d >>= f)
-      AppType a b -> AppType (bisubst f g a) (b >>= f)
-      AbsType a b c -> AbsType a (b >>= f) (bisubstBiscopeL f g c)
+      UInt64 x a -> UInt64 (x >>= f) a
+      Bin x a b c -> Bin (x >>= f) a (bisubst f g b) (bisubst f g c)
+      Lam x a b c d e ->
+        Lam (x >>= f) a (b >>= f) (c >>= f) (d >>= f) (bisubstBiscopeR f g e)
+      App x a b c d -> App (x >>= f) (bisubst f g a) (bisubst f g b) (c >>= f) (d >>= f)
+      AppType x a b -> AppType (x >>= f) (bisubst f g a) (b >>= f)
+      AbsType x a b c -> AbsType (x >>= f) a (b >>= f) (bisubstBiscopeL f g c)
 
 instance Applicative (Core ty) where; pure = return; (<*>) = ap
 instance Monad (Core ty) where; return = bireturn; (>>=) a f = bisubst pure f a

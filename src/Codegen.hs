@@ -28,8 +28,9 @@ import qualified LLVM.IRBuilder.Monad as LLVM
 import qualified LLVM.IRBuilder.Module as LLVM
 
 import Closure
-import Core.Type (Type(..), Kind, Rep(..))
+import Core.Type (Type(..), Kind)
 import Operators (Op(..))
+import Rep (Rep(..))
 
 opaquePtr :: LLVM.Type
 opaquePtr = LLVM.ptr LLVM.i8
@@ -41,7 +42,7 @@ fromOpaquePtr :: MonadIRBuilder m => LLVM.Type -> Operand -> m Operand
 fromOpaquePtr = flip LLVM.bitcast
 
 kindToLLVM :: Show a => Kind a -> LLVM.Type
-kindToLLVM (TRep r) = goRep r
+kindToLLVM (TRep _ r) = goRep r
   where
     goRep rep =
       case rep of

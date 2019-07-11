@@ -19,9 +19,10 @@ import qualified Text.Trifecta as Trifecta
 import qualified Text.Trifecta.Delta as Delta
 import qualified Text.Parser.Token.Highlight as Highlight
 
-import Core.Type (Type(..), Rep(..))
 import Operators (Op(..))
+import Rep (Rep(..))
 import Syntax
+import Syntax.Type (Type(..))
 
 identStyle :: CharParsing m => IdentifierStyle m
 identStyle =

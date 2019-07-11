@@ -88,21 +88,21 @@ trans ex =
   go (Var . F) pure ex
   where
     go ::
-      forall a b.
-      Eq b =>
-      (b -> Closure ty (Var LVar tm)) ->
-      (a -> m ty) ->
-      Core a b ->
-      m (Closure ty b, [b])
+      forall x y.
+      Eq y =>
+      (y -> Closure ty (Var LVar tm)) ->
+      (x -> m ty) ->
+      Core x y ->
+      m (Closure ty y, [y])
     go _ _ (Core.Var a) = pure (Var a, [a])
-    go f g (Core.AppType a _) = go f g a
-    go f g (Core.AbsType mn _ a) =
+    go f g (Core.AppType _ a _) = go f g a
+    go f g (Core.AbsType _ mn _ a) =
       go
         f
         (unvar
            (\() -> throwError . ArgumentAbstractKind $ fromMaybe "<unnamed>" mn) g)
         (fromBiscopeL a)
-    go f g (Core.Lam _ _ kin kout a) = do
+    go f g (Core.Lam _ _ _ kin kout a) = do
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
@@ -116,17 +116,17 @@ trans ex =
       kout' <- traverse g kout
       tell [FunDef n kin' kout' . toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs') kin' kout', vs')
-    go f g (Core.App a b bk abk) = do
+    go f g (Core.App _ a b bk abk) = do
       (a', vs1) <- go f g a
       (b', vs2) <- go f g b
       bk' <- traverse g bk
       abk' <- traverse g abk
       pure (Unpack a' (toScope $ App (Var $ B Fst) (Var $ B Snd) (F <$> b')) bk' abk', vs1 `union` vs2)
-    go f g (Core.Bin o a b) = do
+    go f g (Core.Bin _ o a b) = do
       (a', vs1) <- go f g a
       (b', vs2) <- go f g b
       pure (Bin o a' b', vs1 `union` vs2)
-    go _ _ (Core.UInt64 a) = pure (UInt64 a, [])
+    go _ _ (Core.UInt64 _ a) = pure (UInt64 a, [])
 
 transDef ::
   forall ty tm m.
