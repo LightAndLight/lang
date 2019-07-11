@@ -29,7 +29,7 @@ import qualified Data.Map as Map
 
 import Core (Core)
 import qualified Core
-import Core.Type (Type(..), Rep(..), pattern TArrow)
+import Core.Type (Type(..), Kind, Rep(..), pattern TArrow)
 import Operators (Op(..))
 import Syntax (Syntax)
 import qualified Syntax
@@ -164,8 +164,8 @@ subkindOf k1 k2 = k1 == k2
 
 checkKind ::
   Eq ty =>
-  Type ty -> -- type
-  Type ty -> -- kind
+  Type ty ->
+  Kind ty ->
   Elab ty tm ()
 checkKind ty ki = do
   tKind <- inferKind ty
@@ -178,8 +178,8 @@ checkKind ty ki = do
 
 inferKind ::
   Eq ty =>
-  Type ty -> -- type
-  Elab ty tm (Type ty) -- inferred kind
+  Type ty ->
+  Elab ty tm (Kind ty)
 inferKind ty =
   case ty of
     TVar a -> lookupKind a
@@ -216,14 +216,14 @@ inferKind ty =
       sKind <- inferKind s
       sn <-
         case sKind of
-          TKType n -> pure n
+          TApp (TKType n) _ -> pure n
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
       tKind <- mapElabEnv (addTy s mn) $ inferKind (fromScope t)
       tn <-
         case tKind of
-          TKType n -> pure n
+          TApp (TKType n) _ -> pure n
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
@@ -242,9 +242,9 @@ check tm ty =
           throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a ->
       case ty of
-        TArrow _ _ s t -> do
+        TArrow r1 r2 s t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
-          pure (Core.Lam mn s $ toBiscopeR a')
+          pure (Core.Lam mn s r1 r2 $ toBiscopeR a')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
@@ -283,9 +283,9 @@ infer tm =
     Syntax.App a b -> do
       (a', aType) <- infer a
       case aType of
-        TArrow _ _ s t -> do
+        TArrow r1 r2 s t -> do
           b' <- check b s
-          pure (Core.App a' b', t)
+          pure (Core.App a' b' r1 r2, t)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedArrow (typeNames <$> aType)

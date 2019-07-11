@@ -12,17 +12,17 @@ import Data.Functor.Classes (eq1, showsPrec1)
 import Data.Word (Word64)
 import Data.Text (Text)
 
-import Core.Type (Type)
+import Core.Type (Type, Kind)
 import Operators (Op)
 
 data Core ty tm
   = Var tm
   | UInt64 !Word64
   | Bin Op (Core ty tm) (Core ty tm)
-  | Lam (Maybe Text) (Type ty) (BiscopeR () Type Core ty tm)
-  | App (Core ty tm) (Core ty tm)
+  | Lam (Maybe Text) (Type ty) (Kind ty) (Kind ty) (BiscopeR () Type Core ty tm)
+  | App (Core ty tm) (Core ty tm) (Kind ty) (Kind ty)
   | AppType (Core ty tm) (Type ty)
-  | AbsType (Maybe Text) (Type ty) (BiscopeL () Type Core ty tm)
+  | AbsType (Maybe Text) (Kind ty) (BiscopeL () Type Core ty tm)
   deriving (Functor, Foldable, Traversable)
 deriveBifunctor ''Core
 deriveBifoldable ''Core
@@ -36,8 +36,9 @@ instance Bisubst Core where
       Var a -> g a
       UInt64 a -> UInt64 a
       Bin a b c -> Bin a (bisubst f g b) (bisubst f g c)
-      Lam a b c -> Lam a (b >>= f) (bisubstBiscopeR f g c)
-      App a b -> App (bisubst f g a) (bisubst f g b)
+      Lam a b c d e ->
+        Lam a (b >>= f) (c >>= f) (d >>= f) (bisubstBiscopeR f g e)
+      App a b c d -> App (bisubst f g a) (bisubst f g b) (c >>= f) (d >>= f)
       AppType a b -> AppType (bisubst f g a) (b >>= f)
       AbsType a b c -> AbsType a (b >>= f) (bisubstBiscopeL f g c)
 

@@ -35,6 +35,8 @@ deriveShow1 ''Type
 instance Eq ty => Eq (Type ty) where; (==) = eq1
 instance Show ty => Show (Type ty) where; showsPrec = showsPrec1
 
+type Kind = Type
+
 pattern TArrow :: Type ty -> Type ty -> Type ty -> Type ty -> Type ty
 pattern TArrow r1 r2 s t = TApp (TApp (TApp (TApp TArr r1) r2) s) t
 
