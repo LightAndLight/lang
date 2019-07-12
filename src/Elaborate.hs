@@ -189,50 +189,71 @@ inferKind ty =
       k <- lookupKind a
       pure (Core.TVar a, k)
     Syntax.TForall mn k a -> do
-      aKind <- mapElabEnv (addTy k mn) (inferKind $ fromScope a)
-      for aKind $
+      (kk, _) <- inferKind $ Syntax.TKType 0 `Syntax.TApp` Syntax.TRep RPtr
+      k' <- checkKind k kk
+      (a', aKind) <- mapElabEnv (addTy k' mn) (inferKind $ fromScope a)
+      aKind' <-
+        for aKind $
         \case
           B () -> do
             typeNames <- asks eTypeNames
-            throwError $ KindEscaped (unnamed mn) (typeNames <$> k)
+            throwError $ KindEscaped (unnamed mn) (typeNames <$> k')
           F x -> pure x
+      pure (Core.TForall aKind' mn k' $ toScope a', aKind')
     Syntax.TApp a b -> do
-      aKind <- inferKind a
+      (a', aKind) <- inferKind a
       case aKind of
-        Syntax.TKPi _ s t -> instantiate1 b t <$ checkKind b s
+        Core.TKPi _ _ s t -> do
+          b' <- checkKind b s
+          let k = instantiate1 b' t
+          pure (Core.TApp k a' b', k)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedKPi (typeNames <$> aKind)
-    Syntax.TUInt64 -> pure $ Core.TApp (Core.TKType 0) (Core.TRep RI64)
-    Syntax.TArr ->
-      pure $
-      Core.TKPi (Just "r1") Core.TKRep . toScope $
-      Core.TKPi (Just "r2") Core.TKRep . toScope $
-      Core.TKPi Nothing (Core.TApp (Core.TKType 0) . Core.TVar $ F$B()) . toScope $
-      Core.TKPi Nothing (Core.TApp (Core.TKType 0) . Core.TVar $ F$B()) . toScope $
-      Core.TApp (Core.TKType 0) (Core.TRep RPtr)
-    Syntax.TRep{} -> pure Core.TKRep
-    Syntax.TKRep -> pure $ Core.TApp (Core.TKType 0) (Core.TRep RPtr)
-    Syntax.TKType n ->
-      pure $
-      Core.TKPi Nothing Core.TKRep . toScope $
-      Core.TKType (n+1)
+    Syntax.TUInt64 -> do
+      (k, _) <- inferKind $ Syntax.TApp (Syntax.TKType 0) (Syntax.TRep RI64)
+      pure (Core.TUInt64 k, k)
+    Syntax.TArr -> do
+      (k, _) <- inferKind $
+        Syntax.TKPi (Just "r1") Syntax.TKRep . toScope $
+        Syntax.TKPi (Just "r2") Syntax.TKRep . toScope $
+        Syntax.TKPi Nothing (Syntax.TApp (Syntax.TKType 0) . Syntax.TVar $ F$B()) . toScope $
+        Syntax.TKPi Nothing (Syntax.TApp (Syntax.TKType 0) . Syntax.TVar $ F$B()) . toScope $
+        Syntax.TApp (Syntax.TKType 0) (Syntax.TRep RPtr)
+      pure (Core.TArr k, k)
+    Syntax.TRep r -> do
+      (k, _) <- inferKind Syntax.TKRep
+      pure (Core.TRep k r, k)
+    Syntax.TKRep -> do
+      (k, _) <- inferKind $ Syntax.TApp (Syntax.TKType 0) (Syntax.TRep RPtr)
+      pure (Core.TKRep k, k)
+    Syntax.TKType n -> do
+      (k, _) <- inferKind $
+        Syntax.TKPi Nothing Syntax.TKRep . toScope $
+        Syntax.TKType (n+1)
+      pure (Core.TKType k n, k)
     Syntax.TKPi mn s t -> do
-      sKind <- inferKind s
+      (s', sKind) <- inferKind s
       sn <-
         case sKind of
-          Syntax.TApp (Syntax.TKType n) _ -> pure n
+          Core.TApp _ (Core.TKType _ n) _ -> pure n
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
-      tKind <- mapElabEnv (addTy s mn) $ inferKind (fromScope t)
+      (t', tKind) <- mapElabEnv (addTy s' mn) $ inferKind (fromScope t)
       tn <-
         case tKind of
-          Syntax.TApp (Syntax.TKType n) _ -> pure n
+          Core.TApp _ (Core.TKType _ n) _ -> pure n
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
-      pure $ Core.TApp (Core.TKType $ max sn tn + 1) (Core.TRep RPtr)
+      (k1, _) <- inferKind $ Syntax.TRep RPtr
+      (k2, _) <- inferKind $ Syntax.TKType (max sn tn + 1)
+      let k = Core.TApp _ k2 k1
+      pure
+        ( Core.TKPi k mn s' $ toScope t'
+        , k
+        )
 
 check :: Eq ty => Syntax ty tm -> Syntax.Type ty -> Elab ty tm (Core ty tm)
 check tm ty =

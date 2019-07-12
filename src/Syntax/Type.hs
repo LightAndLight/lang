@@ -5,7 +5,7 @@
 {-# language TypeFamilies #-}
 module Syntax.Type where
 
-import Bound.Scope.Simple (Scope, abstract1)
+import Bound.Scope.Simple (Scope, abstract1, fromScope)
 import Bound.TH (makeBound)
 import Data.Deriving (deriveEq1, deriveShow1)
 import Data.Functor.Classes (eq1, showsPrec1)
@@ -37,3 +37,15 @@ instance Show ty => Show (Type ty) where; showsPrec = showsPrec1
 
 tforall_ :: (Text, Type Text) -> Type Text -> Type Text
 tforall_ (a, s) = TForall (Just a) s . abstract1 a
+
+eqType :: Eq ty => Type ty -> Type ty -> Bool
+eqType (TVar a) (TVar b) = a == b
+eqType (TApp a b) (TApp a' b') = eqType a a' && eqType b b'
+eqType TUInt64 TUInt64 = True
+eqType TArr TArr = True
+eqType (TRep a) (TRep b) = a == b
+eqType (TForall _ a b) (TForall _ a' b') = eqType a a' && eqType (fromScope b) (fromScope b')
+eqType TKRep TKRep = True
+eqType (TKPi _ a b) (TKPi _ a' b') = eqType a a' && eqType (fromScope b) (fromScope b')
+eqType (TKType a) (TKType b) = a == b
+eqType _ _ = False
