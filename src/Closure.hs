@@ -131,8 +131,14 @@ trans ts ks ex =
       tell [FunDef n kin' kout' . toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs') kin' kout', vs')
     go typing kinding f g (Core.App ty a b) = do
-      let bk = Core.getKind kinding $ Core.getType typing b
-      let abk = Core.getKind kinding ty
+      bk <-
+        case Core.getKind kinding $ Core.getType typing b of
+          Core.TKType _ x -> pure x
+          _ -> error "closure: bad type for App"
+      abk <-
+        case Core.getKind kinding ty of
+          Core.TKType _ x -> pure x
+          _ -> error "closure: bad type for App"
       (a', vs1) <- go typing kinding f g a
       (b', vs2) <- go typing kinding f g b
       bk' <- traverse g bk
@@ -156,7 +162,7 @@ transDef ::
   (ty -> Core.Kind ty) ->
   Core.Def ty tm ->
   m (ValDef ty tm)
-transDef typing kinding (Core.Def name tm) =
+transDef typing kinding (Core.Def name tm _) =
   ValDef name <$> trans typing kinding tm
 
 transDefs ::
@@ -187,7 +193,7 @@ transProgram kinding (ds, tm) =
         let
           typing n =
             fromJust . Map.lookup n $
-            foldr (\(Core.Def name val) -> Map.insert name $ Core.getType typing val) mempty ds
+            foldr (\(Core.Def name _ ty) -> Map.insert name ty) mempty ds
         ds' <- transDefs typing kinding ds
         tm' <- trans typing kinding tm
         pure (ds', tm')

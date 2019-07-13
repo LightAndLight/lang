@@ -13,6 +13,7 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe, fromJust)
 import Data.String (fromString)
 import Data.Text (Text)
+import GHC.Stack (HasCallStack)
 import LLVM.AST.Operand (Operand)
 import LLVM.IRBuilder (MonadIRBuilder)
 import LLVM.IRBuilder.Module (MonadModuleBuilder)
@@ -41,15 +42,15 @@ toOpaquePtr o = LLVM.bitcast o opaquePtr
 fromOpaquePtr :: MonadIRBuilder m => LLVM.Type -> Operand -> m Operand
 fromOpaquePtr = flip LLVM.bitcast
 
-kindToLLVM :: Show a => Kind a -> LLVM.Type
-kindToLLVM (TRep _ r) = goRep r
+kindToLLVM :: (HasCallStack, Show a) => Kind a -> LLVM.Type
+kindToLLVM (TRep r) = goRep r
   where
     goRep rep =
       case rep of
         RPtr -> opaquePtr
         RI64 -> LLVM.i64
         RList rs -> LLVM.StructureType False (goRep <$> rs)
-kindToLLVM a = error $ "argKindToLLVM: invalid input: " <> show a
+kindToLLVM a = error $ "kindToLLVM: invalid input: " <> show a
 
 closureType :: Show a => Kind a -> Kind a -> LLVM.Type
 closureType kin kout =
@@ -167,10 +168,10 @@ cg_expr_inner malloc names = go
           e' <- go var e
           x' <- go var x
           LLVM.call f' [(e', []), (x', [])]
-        Closure a b kin kout -> do
+        Closure a b inrep outrep -> do
           size <- LLVM.int32 2
           loc <-
-            fromOpaquePtr (LLVM.ptr $ closureType kin kout) =<<
+            fromOpaquePtr (LLVM.ptr $ closureType inrep outrep) =<<
             LLVM.call malloc [(size, [])]
 
           a' <- go var a

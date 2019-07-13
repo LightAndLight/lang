@@ -5,7 +5,7 @@ module Parser where
 
 import Biscope (abs1BiscopeR, abs1BiscopeL)
 import Bound.Scope.Simple (abstract1)
-import Control.Applicative ((<|>), some, many)
+import Control.Applicative ((<|>), liftA2, some, many)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text.Encoding (encodeUtf8)
@@ -72,8 +72,9 @@ tyAtom =
   TArr <$ reservedC "Arrow" <|>
   TRep <$> rep <|>
   TKRep <$ reservedC "Rep" <|>
-  TKType <$ Trifecta.runUnspaced (reservedC "Type") <*> Trifecta.brackets Trifecta.decimal <|>
-  Trifecta.parens type_
+  uncurry TKType <$
+  Trifecta.runUnspaced (reservedC "Type") <*>
+  Trifecta.brackets (liftA2 (,) (Trifecta.decimal <* Trifecta.comma) type_)
 
 type_ :: (Monad m, TokenParsing m) => m (Type Text)
 type_ =
