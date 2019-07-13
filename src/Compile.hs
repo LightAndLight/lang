@@ -16,7 +16,7 @@ import Closure (transProgram)
 import qualified Closure
 import Elaborate
 import Syntax
-import Core.Type
+import Syntax.Type
 import Codegen
 
 checkProgram ::
@@ -28,10 +28,10 @@ checkProgram ::
     , Closure.Closure Text Text
     )
 checkProgram (ds, ex) ty = do
-  let ee = elab (newElabEnv id id) (checkDefsThen id ds $ check ex ty)
+  let ee = elab (newElabEnv id id) (checkDefsThen id ds $ check ex . fst =<< inferKind ty)
   traverse_ print (eWarnings ee)
   prog <- either (\err -> print err *> exitFailure) pure $ eResult ee
-  either (\err -> print err *> exitFailure) pure $ transProgram prog
+  either (\err -> print err *> exitFailure) pure $ transProgram undefined prog
 
 genLLVM :: FilePath -> ([Def Text Text], Syntax Text Text) -> IO ()
 genLLVM fp prog = do

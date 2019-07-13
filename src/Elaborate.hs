@@ -247,41 +247,40 @@ inferKind ty =
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
-      (k1, _) <- inferKind $ Syntax.TRep RPtr
-      (k2, _) <- inferKind $ Syntax.TKType (max sn tn + 1)
-      let k = Core.TApp _ k2 k1
+      (k, _) <- inferKind $ Syntax.TKType (max sn tn + 1) `Syntax.TApp` Syntax.TRep RPtr
       pure
         ( Core.TKPi k mn s' $ toScope t'
         , k
         )
 
-check :: Eq ty => Syntax ty tm -> Syntax.Type ty -> Elab ty tm (Core ty tm)
-check tm ty =
+check :: Eq ty => Syntax ty tm -> Core.Type ty -> Elab ty tm (Core ty tm)
+check tm ty = do
   case tm of
-    Syntax.Natural n ->
+    Syntax.Natural n -> do
+      typeNames <- asks eTypeNames
       case ty of
-        Syntax.TUInt64 -> do
-          unless (n < 2^(64::Integer)) . warn $ WOverflow n TUInt64
+        Core.TUInt64{} -> do
+          unless (n < 2^(64::Integer)) . warn $ WOverflow n (typeNames <$> ty)
           pure $ Core.UInt64 ty (fromIntegral n)
-        _ -> do
-          typeNames <- asks eTypeNames
-          throwError $ NaturalIsNot (typeNames <$> ty)
-    Syntax.Lam mn a ->
+        _ -> throwError $ NaturalIsNot (typeNames <$> ty)
+    Syntax.Lam mn a -> do
       case ty of
-        Syntax.TApp (Syntax.TApp (Syntax.TApp (Syntax.TApp Syntax.TArr r1) r2) s) t -> do
+        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} _) _) s) t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
-          pure (Core.Lam ty mn s r1 r2 $ toBiscopeR a')
+          pure (Core.Lam ty mn s $ toBiscopeR a')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
     Syntax.AbsType mn k rest ->
       case ty of
-        Syntax.TForall _ k' restTy -> do
-          unless (k == k') $ do
+        Core.TForall _ _ k' restTy -> do
+          (kk, _) <- inferKind $ Syntax.TKType 0 `Syntax.TApp` Syntax.TRep RPtr
+          k2 <- checkKind k kk
+          unless (k2 `Core.eqType` k') $ do
             typeNames <- asks eTypeNames
-            throwError $ KindMismatch (typeNames <$> k') (typeNames <$> k)
-          rest' <- mapElabEnv (addTy k mn) $ check (fromBiscopeL rest) (fromScope restTy)
-          pure $ Core.AbsType ty mn k (toBiscopeL rest')
+            throwError $ KindMismatch (typeNames <$> k') (typeNames <$> k2)
+          rest' <- mapElabEnv (addTy k2 mn) $ check (fromBiscopeL rest) (fromScope restTy)
+          pure $ Core.AbsType ty mn k2 (toBiscopeL rest')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ AbsTypeIsNot (typeNames <$> ty)
@@ -299,38 +298,48 @@ infer tm =
     Syntax.Bin op a b ->
       case op of
         Mult -> do
-          a' <- check a TUInt64
-          b' <- check b TUInt64
-          let ty = TUInt64
+          a' <- check a . fst =<< inferKind Syntax.TUInt64
+          b' <- check b . fst =<< inferKind Syntax.TUInt64
+          (ty, _) <- inferKind Syntax.TUInt64
           pure (Core.Bin ty op a' b', ty)
         Add -> do
-          a' <- check a TUInt64
-          b' <- check b TUInt64
-          let ty = TUInt64
+          a' <- check a . fst =<< inferKind Syntax.TUInt64
+          b' <- check b . fst =<< inferKind Syntax.TUInt64
+          (ty, _) <- inferKind Syntax.TUInt64
           pure (Core.Bin ty op a' b', ty)
     Syntax.App a b -> do
       (a', aType) <- infer a
       case aType of
-        Syntax.TApp (Syntax.TApp (Syntax.TApp (Syntax.TApp Syntax.TArr r1) r2) s) t -> do
+        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} _) _) s) t -> do
           b' <- check b s
-          pure (Core.App t a' b' r1 r2, t)
+          pure (Core.App t a' b', t)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedArrow (typeNames <$> aType)
     Syntax.AppType a t -> do
       (a', aType) <- infer a
       case aType of
-        Core.TForall _ k rest -> do
-          checkKind t k
-          let ty = instantiate1 t rest
-          pure (Core.AppType ty a' t, ty)
+        Core.TForall _ _ k rest -> do
+          t' <- checkKind t k
+          let ty = instantiate1 t' rest
+          pure (Core.AppType ty a' t', ty)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedForall (typeNames <$> aType)
     Syntax.AbsType mn k a -> do
-      (a', aTy) <- mapElabEnv (addTy k mn) $ infer (fromBiscopeL a)
-      let ty = TForall mn k $ toScope aTy
-      pure (Core.AbsType ty mn k $ toBiscopeL a', ty)
+      (kk, _) <- inferKind $ Syntax.TKType 0 `Syntax.TApp` Syntax.TRep RPtr
+      k' <- checkKind k kk
+      (a', aTy) <- mapElabEnv (addTy k' mn) $ infer (fromBiscopeL a)
+      resKind <-
+        traverse
+          (unvar
+             (\() -> do
+                 typeNames <- asks eTypeNames
+                 throwError $ KindEscaped (unnamed mn) (typeNames <$> k'))
+             pure)
+          (Core.getKind Core.TVar aTy)
+      let ty = Core.TForall resKind mn k' $ toScope aTy
+      pure (Core.AbsType ty mn k' $ toBiscopeL a', ty)
     _ -> do
       varNames <- asks eVarNames
       typeNames <- asks eTypeNames
@@ -349,11 +358,16 @@ checkDefsThen name defs ma = do
   traverse_ (throwError . DefMissingSig . name) loneDefs
   traverse_ (throwError . SigMissingBody . name) loneSigs
 
-  tys <- traverse (\(_, t) -> t <$ checkKind t (TApp (TKType 0) (TRep RPtr))) paired
+  paired' <-
+    traverse
+      (\(v, t) -> do
+          (k, _) <- inferKind $ Syntax.TApp (Syntax.TKType 0) (Syntax.TRep RPtr)
+          (,) v <$> checkKind t k)
+      paired
 
   (defs', a) <-
-    mapElabEnv (\e -> e { eTypes = \n -> Map.lookup n tys <|> eTypes e n }) $
-    (,) <$> traverse (uncurry check) paired <*> ma
+    mapElabEnv (\e -> e { eTypes = \n -> fmap snd (Map.lookup n paired') <|> eTypes e n }) $
+    (,) <$> traverse (uncurry check) paired' <*> ma
 
   pure (Map.foldrWithKey (\n v -> (Core.Def n v :)) [] defs', a)
   where

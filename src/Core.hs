@@ -19,8 +19,8 @@ data Core ty tm
   = Var tm
   | UInt64 (Type ty) !Word64
   | Bin (Type ty) Op (Core ty tm) (Core ty tm)
-  | Lam (Type ty) (Maybe Text) (Type ty) (Kind ty) (Kind ty) (BiscopeR () Type Core ty tm)
-  | App (Type ty) (Core ty tm) (Core ty tm) (Kind ty) (Kind ty)
+  | Lam (Type ty) (Maybe Text) (Type ty) (BiscopeR () Type Core ty tm)
+  | App (Type ty) (Core ty tm) (Core ty tm)
   | AppType (Type ty) (Core ty tm) (Type ty)
   | AbsType (Type ty) (Maybe Text) (Kind ty) (BiscopeL () Type Core ty tm)
   deriving (Functor, Foldable, Traversable)
@@ -36,9 +36,9 @@ instance Bisubst Core where
       Var a -> g a
       UInt64 x a -> UInt64 (x >>= f) a
       Bin x a b c -> Bin (x >>= f) a (bisubst f g b) (bisubst f g c)
-      Lam x a b c d e ->
-        Lam (x >>= f) a (b >>= f) (c >>= f) (d >>= f) (bisubstBiscopeR f g e)
-      App x a b c d -> App (x >>= f) (bisubst f g a) (bisubst f g b) (c >>= f) (d >>= f)
+      Lam x a b c ->
+        Lam (x >>= f) a (b >>= f) (bisubstBiscopeR f g c)
+      App x a b -> App (x >>= f) (bisubst f g a) (bisubst f g b)
       AppType x a b -> AppType (x >>= f) (bisubst f g a) (b >>= f)
       AbsType x a b c -> AbsType (x >>= f) a (b >>= f) (bisubstBiscopeL f g c)
 
@@ -54,3 +54,14 @@ instance (Show ty, Show tm) => Show (Core ty tm) where; showsPrec = showsPrec1
 
 data Def ty tm = Def tm (Core ty tm)
   deriving Show
+
+getType :: (tm -> Type ty) -> Core ty tm -> Type ty
+getType f ty =
+  case ty of
+    Var a -> f a
+    UInt64 a _ -> a
+    Bin a _ _ _ -> a
+    Lam a _ _ _ -> a
+    App a _ _ -> a
+    AppType a _ _ -> a
+    AbsType a _ _ _ -> a

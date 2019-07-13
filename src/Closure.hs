@@ -1,3 +1,4 @@
+{-# language BangPatterns #-}
 {-# language DeriveFunctor, DeriveFoldable, DeriveTraversable #-}
 {-# language FlexibleContexts, RecursiveDo, ScopedTypeVariables #-}
 {-# language OverloadedStrings #-}
@@ -16,15 +17,17 @@ import Control.Monad.Writer (MonadWriter, runWriterT, tell)
 import Data.Deriving (deriveEq1, deriveShow1)
 import Data.Functor.Classes (eq1, showsPrec1)
 import Data.List (elemIndex, union)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromJust, fromMaybe)
 import Data.Text (Text)
 import Data.Word (Word64)
 
+import qualified Data.Map as Map
 import qualified Data.Text as Text
 
 import Core (Core)
 import Core.Type (Kind)
 import qualified Core
+import qualified Core.Type as Core
 import Operators (Op)
 
 data Pos = Fst | Snd
@@ -81,28 +84,39 @@ trans ::
   , MonadError ClosureError m
   , Eq tm
   ) =>
+  (tm -> Core.Type ty) ->
+  (ty -> Core.Kind ty) ->
   Core ty tm ->
   m (Closure ty tm)
-trans ex =
+trans ts ks ex =
   fst <$>
-  go (Var . F) pure ex
+  go ts ks (Var . F) pure ex
   where
     go ::
       forall x y.
       Eq y =>
+      (y -> Core.Type x) ->
+      (x -> Core.Kind x) ->
       (y -> Closure ty (Var LVar tm)) ->
       (x -> m ty) ->
       Core x y ->
       m (Closure ty y, [y])
-    go _ _ (Core.Var a) = pure (Var a, [a])
-    go f g (Core.AppType _ a _) = go f g a
-    go f g (Core.AbsType _ mn _ a) =
+    go _ _ _ _ (Core.Var a) = pure (Var a, [a])
+    go typing kinding f g (Core.AppType _ a _) = go typing kinding f g a
+    go typing kinding f g (Core.AbsType _ mn k a) =
       go
+        (fmap F . typing)
+        (unvar (\() -> F <$> k) (fmap F . kinding))
         f
         (unvar
            (\() -> throwError . ArgumentAbstractKind $ fromMaybe "<unnamed>" mn) g)
         (fromBiscopeL a)
-    go f g (Core.Lam _ _ _ kin kout a) = do
+    go typing kinding f g (Core.Lam ty _ t a) = do
+      let
+        (!kin, !kout) =
+          case ty of
+            Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} k1) k2) _) _ -> (k1, k2)
+            _ -> error "closure: bad type for lam"
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
@@ -110,23 +124,25 @@ trans ex =
             unvar
               (\_ -> Var $ B LArg)
               (\b -> maybe (f b) (\ix -> Proj (fromIntegral ix) (Var $ B LEnv)) $ elemIndex b vs')
-        (a', vs) <- go replace g $ fromBiscopeR a
+        (a', vs) <- go (unvar (\() -> t) typing) kinding replace g $ fromBiscopeR a
       n <- freshName
       kin' <- traverse g kin
       kout' <- traverse g kout
       tell [FunDef n kin' kout' . toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs') kin' kout', vs')
-    go f g (Core.App _ a b bk abk) = do
-      (a', vs1) <- go f g a
-      (b', vs2) <- go f g b
+    go typing kinding f g (Core.App ty a b) = do
+      let bk = Core.getKind kinding $ Core.getType typing b
+      let abk = Core.getKind kinding ty
+      (a', vs1) <- go typing kinding f g a
+      (b', vs2) <- go typing kinding f g b
       bk' <- traverse g bk
       abk' <- traverse g abk
       pure (Unpack a' (toScope $ App (Var $ B Fst) (Var $ B Snd) (F <$> b')) bk' abk', vs1 `union` vs2)
-    go f g (Core.Bin _ o a b) = do
-      (a', vs1) <- go f g a
-      (b', vs2) <- go f g b
+    go typing kinding f g (Core.Bin _ o a b) = do
+      (a', vs1) <- go typing kinding f g a
+      (b', vs2) <- go typing kinding f g b
       pure (Bin o a' b', vs1 `union` vs2)
-    go _ _ (Core.UInt64 _ a) = pure (UInt64 a, [])
+    go _ _ _ _ (Core.UInt64 _ a) = pure (UInt64 a, [])
 
 transDef ::
   forall ty tm m.
@@ -136,10 +152,12 @@ transDef ::
   , MonadFix m
   , Eq tm
   ) =>
+  (tm -> Core.Type ty) ->
+  (ty -> Core.Kind ty) ->
   Core.Def ty tm ->
   m (ValDef ty tm)
-transDef (Core.Def name tm) =
-  ValDef name <$> trans tm
+transDef typing kinding (Core.Def name tm) =
+  ValDef name <$> trans typing kinding tm
 
 transDefs ::
   ( MonadState [Text] m
@@ -148,22 +166,29 @@ transDefs ::
   , MonadFix m
   , Eq tm
   ) =>
+  (tm -> Core.Type ty) ->
+  (ty -> Core.Kind ty) ->
   [Core.Def ty tm] ->
   m [ValDef ty tm]
-transDefs [] = pure []
-transDefs (d:ds) =
-  (:) <$> transDef d <*> transDefs ds
+transDefs _ _ [] = pure []
+transDefs typing kinding (d:ds) =
+  (:) <$> transDef typing kinding d <*> transDefs typing kinding ds
 
 transProgram ::
-  Eq tm =>
+  Ord tm =>
+  (ty -> Core.Kind ty) ->
   ([Core.Def ty tm], Core ty tm) ->
   Either ClosureError ([FunDef ty tm], [ValDef ty tm], Closure ty tm)
-transProgram (ds, tm) =
+transProgram kinding (ds, tm) =
   runExcept $ do
     ((vds'', tm''), fds'') <-
       flip evalStateT (Text.pack . ('f' :) . show <$> [0::Int ..]) .
       runWriterT $ do
-        tm' <- trans tm
-        ds' <- transDefs ds
+        let
+          typing n =
+            fromJust . Map.lookup n $
+            foldr (\(Core.Def name val) -> Map.insert name $ Core.getType typing val) mempty ds
+        ds' <- transDefs typing kinding ds
+        tm' <- trans typing kinding tm
         pure (ds', tm')
     pure (fds'', vds'', tm'')
