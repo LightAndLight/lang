@@ -161,7 +161,7 @@ lookupType t = do
 subkindOf :: Eq ty => Core.Kind ty -> Core.Kind ty -> Bool
 subkindOf (Core.TKType n a) (Core.TKType n' b) =
   Core.eqType a b && n <= n'
-subkindOf (Core.TKPi _ _ s t) (Core.TKPi _ _ s' t') =
+subkindOf (Core.TKPi _ s t) (Core.TKPi _ s' t') =
   Core.eqType s s' &&
   subkindOf (fromScope t) (fromScope t')
 subkindOf k1 k2 = Core.eqType k1 k2
@@ -200,14 +200,13 @@ inferKind ty =
             typeNames <- asks eTypeNames
             throwError $ KindEscaped (unnamed mn) (typeNames <$> k')
           F x -> pure x
-      pure (Core.TForall aKind' mn k' $ toScope a', aKind')
+      pure (Core.TForall mn k' $ toScope a', aKind')
     Syntax.TApp a b -> do
       (a', aKind) <- inferKind a
       case aKind of
-        Core.TKPi _ _ s t -> do
+        Core.TKPi _ s t -> do
           b' <- checkKind b s
-          let k = instantiate1 b' t
-          pure (Core.TApp k a' b', k)
+          pure (Core.TApp a' b', instantiate1 b' t)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedKPi (typeNames <$> aKind)
@@ -215,12 +214,11 @@ inferKind ty =
       pure (Core.TUInt64, Core.TKType 0 $ Core.TRep RI64)
     Syntax.TArr -> do
       let
-        t = Core.TKType 1 (Core.TRep RPtr)
         k =
-          Core.TKPi t (Just "r1") Core.TKRep . toScope $
-          Core.TKPi t (Just "r2") Core.TKRep . toScope $
-          Core.TKPi t Nothing (Core.TKType 0 . Core.TVar $ F$B()) . toScope $
-          Core.TKPi t Nothing (Core.TKType 0 . Core.TVar $ F$B()) . toScope $
+          Core.TKPi (Just "r1") Core.TKRep . toScope $
+          Core.TKPi (Just "r2") Core.TKRep . toScope $
+          Core.TKPi Nothing (Core.TKType 0 . Core.TVar $ F$B()) . toScope $
+          Core.TKPi Nothing (Core.TKType 0 . Core.TVar $ F$B()) . toScope $
           Core.TKType 0 (Core.TRep RPtr)
       pure (Core.TArr, k)
     Syntax.TRep r ->
@@ -245,10 +243,9 @@ inferKind ty =
           _ -> do
             typeNames <- asks eTypeNames
             throwError $ ExpectedKType (typeNames <$> sKind)
-      let k = Core.TKType (max sn tn + 1) (Core.TRep RPtr)
       pure
-        ( Core.TKPi k mn s' $ toScope t'
-        , k
+        ( Core.TKPi mn s' $ toScope t'
+        , Core.TKType (max sn tn + 1) (Core.TRep RPtr)
         )
 
 getRep :: Core.Kind ty -> Elab ty tm Rep
@@ -274,7 +271,7 @@ check tm ty = do
         _ -> throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a -> do
       case ty of
-        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
+        Core.TApp (Core.TApp (Core.TApp (Core.TApp Core.TArr{} r1) r2) s) t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
           r1' <- getRep r1
           r2' <- getRep r2
@@ -284,7 +281,7 @@ check tm ty = do
           throwError $ LamIsNot (typeNames <$> ty)
     Syntax.AbsType mn k rest ->
       case ty of
-        Core.TForall _ _ k' restTy -> do
+        Core.TForall _ k' restTy -> do
           k2 <- checkKind k $ Core.TKType 1 (Core.TRep RPtr)
           unless (k2 `Core.eqType` k') $ do
             typeNames <- asks eTypeNames
@@ -318,7 +315,7 @@ infer tm =
     Syntax.App a b -> do
       (a', aType) <- infer a
       case aType of
-        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
+        Core.TApp (Core.TApp (Core.TApp (Core.TApp Core.TArr{} r1) r2) s) t -> do
           b' <- check b s
           r1' <- getRep r1
           r2' <- getRep r2
@@ -329,7 +326,7 @@ infer tm =
     Syntax.AppType a t -> do
       (a', aType) <- infer a
       case aType of
-        Core.TForall _ _ k rest -> do
+        Core.TForall _ k rest -> do
           t' <- checkKind t k
           pure (Core.AppType a' t', instantiate1 t' rest)
         _ -> do
@@ -338,15 +335,7 @@ infer tm =
     Syntax.AbsType mn k a -> do
       k' <- checkKind k $ Core.TKType 1 (Core.TRep RPtr)
       (a', aTy) <- mapElabEnv (addTy k' mn) $ infer (fromBiscopeL a)
-      resKind <-
-        traverse
-          (unvar
-             (\() -> do
-                 typeNames <- asks eTypeNames
-                 throwError $ KindEscaped (unnamed mn) (typeNames <$> k'))
-             pure)
-          (Core.getKind Core.TVar aTy)
-      pure (Core.AbsType mn k' $ toBiscopeL a', Core.TForall resKind mn k' $ toScope aTy)
+      pure (Core.AbsType mn k' $ toBiscopeL a', Core.TForall mn k' $ toScope aTy)
     _ -> do
       varNames <- asks eVarNames
       typeNames <- asks eTypeNames
