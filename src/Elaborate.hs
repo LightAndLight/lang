@@ -261,9 +261,9 @@ check tm ty = do
         _ -> throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a -> do
       case ty of
-        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} _) _) s) t -> do
+        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
-          pure (Core.Lam ty mn s $ toBiscopeR a')
+          pure (Core.Lam (Core.ArrowType r1 r2 s t) mn s $ toBiscopeR a')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)

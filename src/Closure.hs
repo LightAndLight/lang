@@ -111,12 +111,7 @@ trans ts ks ex =
         (unvar
            (\() -> throwError . ArgumentAbstractKind $ fromMaybe "<unnamed>" mn) g)
         (fromBiscopeL a)
-    go typing kinding f g (Core.Lam ty _ t a) = do
-      let
-        (!kin, !kout) =
-          case ty of
-            Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} k1) k2) _) _ -> (k1, k2)
-            _ -> error "closure: bad type for lam"
+    go typing kinding f g (Core.Lam (Core.ArrowType kin kout _ _) _ t a) = do
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
