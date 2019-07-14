@@ -15,35 +15,32 @@ import Data.Text (Text)
 
 import Core.Type (Type(..), Kind)
 import Operators (Op)
+import Rep (Rep)
 
 data LamInfo ty
   = LamInfo
-  { liInKind :: Kind ty
-  , liOutKind :: Kind ty
+  { liInRep :: Rep
+  , liOutRep :: Rep
   , liInType :: Type ty
   , liOutType :: Type ty
   } deriving (Eq, Show, Functor, Foldable, Traversable)
 deriveEq1 ''LamInfo
 deriveShow1 ''LamInfo
 bindLamInfo :: (a -> Type b) -> LamInfo a -> LamInfo b
-bindLamInfo f (LamInfo a b c d) = LamInfo (a >>= f) (b >>= f) (c >>= f) (d >>= f)
+bindLamInfo f (LamInfo a b c d) = LamInfo a b (c >>= f) (d >>= f)
 
-data AppInfo ty
+data AppInfo
   = AppInfo
-  { aiInKind :: Kind ty
-  , aiOutKind :: Kind ty
-  } deriving (Eq, Show, Functor, Foldable, Traversable)
-deriveEq1 ''AppInfo
-deriveShow1 ''AppInfo
-bindAppInfo :: (a -> Type b) -> AppInfo a -> AppInfo b
-bindAppInfo f (AppInfo a b) = AppInfo (a >>= f) (b >>= f)
+  { aiInKind :: Rep
+  , aiOutKind :: Rep
+  } deriving (Eq, Show)
 
 data Core ty tm
   = Var tm
   | UInt64 !Word64
   | Bin Op (Core ty tm) (Core ty tm)
   | Lam (LamInfo ty) (Maybe Text) (Type ty) (BiscopeR () Type Core ty tm)
-  | App (AppInfo ty) (Core ty tm) (Core ty tm)
+  | App AppInfo (Core ty tm) (Core ty tm)
   | AppType (Core ty tm) (Type ty)
   | AbsType (Maybe Text) (Kind ty) (BiscopeL () Type Core ty tm)
   deriving (Functor, Foldable, Traversable)
@@ -61,7 +58,7 @@ instance Bisubst Core where
       Bin a b c -> Bin a (bisubst f g b) (bisubst f g c)
       Lam x a b c ->
         Lam (bindLamInfo f x) a (b >>= f) (bisubstBiscopeR f g c)
-      App x a b -> App (bindAppInfo f x) (bisubst f g a) (bisubst f g b)
+      App x a b -> App x (bisubst f g a) (bisubst f g b)
       AppType a b -> AppType (bisubst f g a) (b >>= f)
       AbsType a b c -> AbsType a (b >>= f) (bisubstBiscopeL f g c)
 

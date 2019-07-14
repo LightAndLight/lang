@@ -25,10 +25,10 @@ import qualified Data.Map as Map
 import qualified Data.Text as Text
 
 import Core (Core)
-import Core.Type (Kind)
 import qualified Core
 import qualified Core.Type as Core
 import Operators (Op)
+import Rep (Rep)
 
 data Pos = Fst | Snd
   deriving (Eq, Show)
@@ -39,8 +39,8 @@ data Closure ty tm
   | Name Text
   | Product [Closure ty tm]
   | Proj !Word64 (Closure ty tm)
-  | Closure (Closure ty tm) (Closure ty tm) (Kind ty) (Kind ty)
-  | Unpack (Closure ty tm) (Scope Pos (Closure ty) tm) (Kind ty) (Kind ty)
+  | Closure (Closure ty tm) (Closure ty tm) Rep Rep
+  | Unpack (Closure ty tm) (Scope Pos (Closure ty) tm) Rep Rep
   | App (Closure ty tm) (Closure ty tm) (Closure ty tm)
   | Bin Op (Closure ty tm) (Closure ty tm)
   deriving (Functor, Foldable, Traversable)
@@ -56,8 +56,8 @@ data LVar = LEnv | LArg
 data FunDef ty tm
   = FunDef
   { fName :: Text
-  , fInKind :: Kind ty
-  , fOutKind :: Kind ty
+  , fInRep :: Rep
+  , fOutRep :: Rep
   , fBody :: Scope LVar (Closure ty) tm
   }
   deriving (Eq, Show, Functor, Foldable, Traversable)
@@ -111,7 +111,7 @@ trans ts ks ex =
         (unvar
            (\() -> throwError . ArgumentAbstractKind $ fromMaybe "<unnamed>" mn) g)
         (fromBiscopeL a)
-    go typing kinding f g (Core.Lam (Core.LamInfo kin kout _ _) _ t a) = do
+    go typing kinding f g (Core.Lam (Core.LamInfo rin rout _ _) _ t a) = do
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
@@ -121,16 +121,12 @@ trans ts ks ex =
               (\b -> maybe (f b) (\ix -> Proj (fromIntegral ix) (Var $ B LEnv)) $ elemIndex b vs')
         (a', vs) <- go (unvar (\() -> t) typing) kinding replace g $ fromBiscopeR a
       n <- freshName
-      kin' <- traverse g kin
-      kout' <- traverse g kout
-      tell [FunDef n kin' kout' . toScope $ a' >>= replace]
-      pure (Closure (Name n) (Product $ Var <$> vs') kin' kout', vs')
-    go typing kinding f g (Core.App (Core.AppInfo bk abk) a b) = do
+      tell [FunDef n rin rout . toScope $ a' >>= replace]
+      pure (Closure (Name n) (Product $ Var <$> vs') rin rout, vs')
+    go typing kinding f g (Core.App (Core.AppInfo rin rout) a b) = do
       (a', vs1) <- go typing kinding f g a
       (b', vs2) <- go typing kinding f g b
-      bk' <- traverse g bk
-      abk' <- traverse g abk
-      pure (Unpack a' (toScope $ App (Var $ B Fst) (Var $ B Snd) (F <$> b')) bk' abk', vs1 `union` vs2)
+      pure (Unpack a' (toScope $ App (Var $ B Fst) (Var $ B Snd) (F <$> b')) rin rout, vs1 `union` vs2)
     go typing kinding f g (Core.Bin o a b) = do
       (a', vs1) <- go typing kinding f g a
       (b', vs2) <- go typing kinding f g b

@@ -45,6 +45,7 @@ data TypeError
   | VarNotInScope Text
   | ExpectedKPi (Core.Type Text)
   | ExpectedKForall (Core.Type Text)
+  | ExpectedKRep (Core.Type Text)
   | ExpectedKType (Core.Type Text)
   | ExpectedKType0 (Core.Type Text)
   | ExpectedKTypeN (Core.Type Text)
@@ -62,6 +63,7 @@ data TypeError
   | DuplicateDefinition Text
   | SigMissingBody Text
   | DefMissingSig Text
+  | AbstractRepKind Text
   deriving Show
 
 data ElabEnv ty tm
@@ -249,6 +251,17 @@ inferKind ty =
         , k
         )
 
+getRep :: Core.Kind ty -> Elab ty tm Rep
+getRep r2 =
+  case r2 of
+    Core.TRep r -> pure r
+    Core.TVar v  -> do
+      typeNames <- asks eTypeNames
+      throwError $ AbstractRepKind (typeNames v)
+    _  -> do
+      typeNames <- asks eTypeNames
+      throwError $ ExpectedKRep (typeNames <$> r2)
+
 check :: Eq ty => Syntax ty tm -> Core.Type ty -> Elab ty tm (Core ty tm)
 check tm ty = do
   case tm of
@@ -263,7 +276,9 @@ check tm ty = do
       case ty of
         Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
-          pure (Core.Lam (Core.LamInfo r1 r2 s t) mn s $ toBiscopeR a')
+          r1' <- getRep r1
+          r2' <- getRep r2
+          pure (Core.Lam (Core.LamInfo r1' r2' s t) mn s $ toBiscopeR a')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
@@ -305,7 +320,9 @@ infer tm =
       case aType of
         Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
           b' <- check b s
-          pure (Core.App (Core.AppInfo r1 r2) a' b', t)
+          r1' <- getRep r1
+          r2' <- getRep r2
+          pure (Core.App (Core.AppInfo r1' r2') a' b', t)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedArrow (typeNames <$> aType)

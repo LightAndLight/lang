@@ -13,7 +13,6 @@ import Data.Map (Map)
 import Data.Maybe (fromMaybe, fromJust)
 import Data.String (fromString)
 import Data.Text (Text)
-import GHC.Stack (HasCallStack)
 import LLVM.AST.Operand (Operand)
 import LLVM.IRBuilder (MonadIRBuilder)
 import LLVM.IRBuilder.Module (MonadModuleBuilder)
@@ -29,7 +28,6 @@ import qualified LLVM.IRBuilder.Monad as LLVM
 import qualified LLVM.IRBuilder.Module as LLVM
 
 import Closure
-import Core.Type (Type(..), Kind)
 import Operators (Op(..))
 import Rep (Rep(..))
 
@@ -42,25 +40,24 @@ toOpaquePtr o = LLVM.bitcast o opaquePtr
 fromOpaquePtr :: MonadIRBuilder m => LLVM.Type -> Operand -> m Operand
 fromOpaquePtr = flip LLVM.bitcast
 
-kindToLLVM :: (HasCallStack, Show a) => Kind a -> LLVM.Type
-kindToLLVM (TRep r) = goRep r
+repToLLVM :: Rep -> LLVM.Type
+repToLLVM r = goRep r
   where
     goRep rep =
       case rep of
         RPtr -> opaquePtr
         RI64 -> LLVM.i64
         RList rs -> LLVM.StructureType False (goRep <$> rs)
-kindToLLVM a = error $ "kindToLLVM: invalid input: " <> show a
 
-closureType :: Show a => Kind a -> Kind a -> LLVM.Type
-closureType kin kout =
+closureType :: Rep -> Rep -> LLVM.Type
+closureType rin rout =
   let
-    !kin' = kindToLLVM kin
-    !kout' = kindToLLVM kout
+    !rin' = repToLLVM rin
+    !rout' = repToLLVM rout
   in
   LLVM.StructureType
     False
-    [ LLVM.ptr $ LLVM.FunctionType kout' [opaquePtr, kin'] False
+    [ LLVM.ptr $ LLVM.FunctionType rout' [opaquePtr, rin'] False
     , opaquePtr
     ]
 
@@ -88,13 +85,13 @@ cg_fundef ::
   (Text -> Operand) ->
   FunDef Text Text ->
   m (Map Text Operand)
-cg_fundef malloc names (FunDef ln argKind retKind lb) = do
+cg_fundef malloc names (FunDef ln argRep retRep lb) = do
   let
     name = "closure$" <> ln
     funName = LLVM.mkName $ Text.unpack name
-    !argTy = kindToLLVM argKind
+    !argTy = repToLLVM argRep
     argTys = [(opaquePtr, LLVM.NoParameterName), (argTy, LLVM.NoParameterName)]
-    retTy = kindToLLVM retKind
+    retTy = repToLLVM retRep
   n <-
     LLVM.function funName argTys retTy $ \[env, arg] -> do
       a' <-
@@ -187,9 +184,9 @@ cg_expr_inner malloc names = go
           LLVM.store ptr1 0 b'
 
           toOpaquePtr loc
-        Unpack a b bk abk -> do
+        Unpack a b rin rout -> do
           a' <-
-            fromOpaquePtr (LLVM.ptr $ closureType bk abk) =<<
+            fromOpaquePtr (LLVM.ptr $ closureType rin rout) =<<
             go var a
 
           _0 <- LLVM.int32 0
