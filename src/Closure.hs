@@ -102,8 +102,8 @@ trans ts ks ex =
       Core x y ->
       m (Closure ty y, [y])
     go _ _ _ _ (Core.Var a) = pure (Var a, [a])
-    go typing kinding f g (Core.AppType _ a _) = go typing kinding f g a
-    go typing kinding f g (Core.AbsType _ mn k a) =
+    go typing kinding f g (Core.AppType a _) = go typing kinding f g a
+    go typing kinding f g (Core.AbsType mn k a) =
       go
         (fmap F . typing)
         (unvar (\() -> F <$> k) (fmap F . kinding))
@@ -111,7 +111,7 @@ trans ts ks ex =
         (unvar
            (\() -> throwError . ArgumentAbstractKind $ fromMaybe "<unnamed>" mn) g)
         (fromBiscopeL a)
-    go typing kinding f g (Core.Lam (Core.ArrowType kin kout _ _) _ t a) = do
+    go typing kinding f g (Core.Lam (Core.LamInfo kin kout _ _) _ t a) = do
       rec
         let
           vs' = foldr (unvar (const id) (:)) [] vs
@@ -125,25 +125,17 @@ trans ts ks ex =
       kout' <- traverse g kout
       tell [FunDef n kin' kout' . toScope $ a' >>= replace]
       pure (Closure (Name n) (Product $ Var <$> vs') kin' kout', vs')
-    go typing kinding f g (Core.App ty a b) = do
-      bk <-
-        case Core.getKind kinding $ Core.getType typing b of
-          Core.TKType _ x -> pure x
-          _ -> error "closure: bad type for App"
-      abk <-
-        case Core.getKind kinding ty of
-          Core.TKType _ x -> pure x
-          _ -> error "closure: bad type for App"
+    go typing kinding f g (Core.App (Core.AppInfo bk abk) a b) = do
       (a', vs1) <- go typing kinding f g a
       (b', vs2) <- go typing kinding f g b
       bk' <- traverse g bk
       abk' <- traverse g abk
       pure (Unpack a' (toScope $ App (Var $ B Fst) (Var $ B Snd) (F <$> b')) bk' abk', vs1 `union` vs2)
-    go typing kinding f g (Core.Bin _ o a b) = do
+    go typing kinding f g (Core.Bin o a b) = do
       (a', vs1) <- go typing kinding f g a
       (b', vs2) <- go typing kinding f g b
       pure (Bin o a' b', vs1 `union` vs2)
-    go _ _ _ _ (Core.UInt64 _ a) = pure (UInt64 a, [])
+    go _ _ _ _ (Core.UInt64 a) = pure (UInt64 a, [])
 
 transDef ::
   forall ty tm m.

@@ -257,13 +257,13 @@ check tm ty = do
       case ty of
         Core.TUInt64{} -> do
           unless (n < 2^(64::Integer)) . warn $ WOverflow n (typeNames <$> ty)
-          pure $ Core.UInt64 ty (fromIntegral n)
+          pure $ Core.UInt64 (fromIntegral n)
         _ -> throwError $ NaturalIsNot (typeNames <$> ty)
     Syntax.Lam mn a -> do
       case ty of
         Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
           a' <- mapElabEnv (addVar s mn) $ check (fromBiscopeR a) t
-          pure (Core.Lam (Core.ArrowType r1 r2 s t) mn s $ toBiscopeR a')
+          pure (Core.Lam (Core.LamInfo r1 r2 s t) mn s $ toBiscopeR a')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ LamIsNot (typeNames <$> ty)
@@ -275,7 +275,7 @@ check tm ty = do
             typeNames <- asks eTypeNames
             throwError $ KindMismatch (typeNames <$> k') (typeNames <$> k2)
           rest' <- mapElabEnv (addTy k2 mn) $ check (fromBiscopeL rest) (fromScope restTy)
-          pure $ Core.AbsType ty mn k2 (toBiscopeL rest')
+          pure $ Core.AbsType mn k2 (toBiscopeL rest')
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ AbsTypeIsNot (typeNames <$> ty)
@@ -295,19 +295,17 @@ infer tm =
         Mult -> do
           a' <- check a Core.TUInt64
           b' <- check b Core.TUInt64
-          let ty = Core.TUInt64
-          pure (Core.Bin ty op a' b', ty)
+          pure (Core.Bin op a' b', Core.TUInt64)
         Add -> do
           a' <- check a Core.TUInt64
           b' <- check b Core.TUInt64
-          let ty = Core.TUInt64
-          pure (Core.Bin ty op a' b', ty)
+          pure (Core.Bin op a' b', Core.TUInt64)
     Syntax.App a b -> do
       (a', aType) <- infer a
       case aType of
-        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} _) _) s) t -> do
+        Core.TApp _ (Core.TApp _ (Core.TApp _ (Core.TApp _ Core.TArr{} r1) r2) s) t -> do
           b' <- check b s
-          pure (Core.App t a' b', t)
+          pure (Core.App (Core.AppInfo r1 r2) a' b', t)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedArrow (typeNames <$> aType)
@@ -316,13 +314,12 @@ infer tm =
       case aType of
         Core.TForall _ _ k rest -> do
           t' <- checkKind t k
-          let ty = instantiate1 t' rest
-          pure (Core.AppType ty a' t', ty)
+          pure (Core.AppType a' t', instantiate1 t' rest)
         _ -> do
           typeNames <- asks eTypeNames
           throwError $ ExpectedForall (typeNames <$> aType)
     Syntax.AbsType mn k a -> do
-      k' <- checkKind k $ Core.TKType 0 (Core.TRep RPtr)
+      k' <- checkKind k $ Core.TKType 1 (Core.TRep RPtr)
       (a', aTy) <- mapElabEnv (addTy k' mn) $ infer (fromBiscopeL a)
       resKind <-
         traverse
@@ -332,8 +329,7 @@ infer tm =
                  throwError $ KindEscaped (unnamed mn) (typeNames <$> k'))
              pure)
           (Core.getKind Core.TVar aTy)
-      let ty = Core.TForall resKind mn k' $ toScope aTy
-      pure (Core.AbsType ty mn k' $ toBiscopeL a', ty)
+      pure (Core.AbsType mn k' $ toBiscopeL a', Core.TForall resKind mn k' $ toScope aTy)
     _ -> do
       varNames <- asks eVarNames
       typeNames <- asks eTypeNames
@@ -365,7 +361,7 @@ checkDefsThen name defs ma = do
     (,) <$> traverse (uncurry check) paired' <*> ma
 
 
-  pure (Map.foldrWithKey (\n v -> (Core.Def n v (Core.getType (fromJust . types') v):)) [] defs', a)
+  pure (Map.foldrWithKey (\n v -> (Core.Def n v (fromJust $ types' n) :)) [] defs', a)
   where
     zipDefs ::
       Ord tm =>
