@@ -15,7 +15,9 @@ import Rep
 
 data Type ty
   -- 'types'
-  = TVar ty
+  = THole
+
+  | TVar ty
   | TApp (Type ty) (Type ty)
   | TUInt64
   | TArr

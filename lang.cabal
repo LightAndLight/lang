@@ -36,6 +36,7 @@ library
                      , containers
                      , deriving-compat
                      , dlist
+                     , lens
                      , llvm-hs ==7.0.0
                      , llvm-hs-pure ==7.0.0
                      , llvm-hs-pretty ==0.6.1.0
@@ -44,6 +45,8 @@ library
                      , process ^>= 1.6
                      , text ^>=1.2
                      , trifecta ^>=2
+                     , validation
+                     , witherable
   hs-source-dirs:      src
   ghc-options:         -Wall -Werror
   default-language:    Haskell2010
